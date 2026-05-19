@@ -1,0 +1,23 @@
+# ChangeSnap 默认配置
+# 快捷键配置
+hotkeys:
+  screenshot_and_advance: "Ctrl+8"
+  screenshot_only: "Ctrl+9"
+  prev_step: "Ctrl+7"
+  toggle_recording: "Ctrl+0"
+  stop_session: "Ctrl+Shift+S"
+
+# 截图设置
+screenshot:
+  format: "png"
+  monitor: "primary"
+  auto_advance: true
+
+# 录屏设置
+recording:
+  fps: 5
+  segment_minutes: 30
+  auto_compress: true
+
+# 工作目录
+work_dir: "~/changesnap"
