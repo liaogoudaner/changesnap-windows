@@ -418,9 +418,13 @@ class RecordingEngine:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
+            # On Windows, use PIPE for stdin so we can send 'q' for graceful exit.
+            # On macOS/Linux, SIGINT handles graceful exit via signal.
+            _stdin = subprocess.PIPE if sys.platform == 'win32' else subprocess.DEVNULL
+
             self._ffmpeg_process = subprocess.Popen(
                 cmd,
-                stdin=subprocess.DEVNULL,
+                stdin=_stdin,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
@@ -484,12 +488,12 @@ class RecordingEngine:
 
         当设置了 region 时，会添加 crop 滤镜裁剪录制区域。
         """
+        # NOTE: NO -nostdin — we write 'q' to stdin for graceful exit on Windows
         cmd = [
             ffmpeg_path,
             "-y",
             "-loglevel",
             "error",
-            "-nostdin",
             "-f",
             "gdigrab",
             "-framerate",
@@ -541,13 +545,23 @@ class RecordingEngine:
         try:
             pid = proc.pid
 
-            # Stage 1: SIGINT — 让 ffmpeg 优雅退出，写入完整的 moov atom
-            if sigint_first and sys.platform != "win32":
-                try:
-                    proc.send_signal(signal.SIGINT)
-                    proc.wait(timeout=3)
-                except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                    pass
+            # Stage 1: Graceful exit — write 'q' to stdin (Windows) or SIGINT (Unix).
+            # This lets ffmpeg write the moov atom so the MP4 is playable.
+            if sigint_first:
+                if sys.platform == 'win32':
+                    # Windows: send 'q' via stdin for graceful quit
+                    try:
+                        proc.stdin.write(b'q\n')
+                        proc.stdin.flush()
+                        proc.wait(timeout=5)
+                    except (subprocess.TimeoutExpired, ProcessLookupError, OSError, AttributeError, BrokenPipeError):
+                        pass
+                else:
+                    try:
+                        proc.send_signal(signal.SIGINT)
+                        proc.wait(timeout=3)
+                    except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                        pass
 
             # Stage 2: SIGTERM / terminate
             if proc.poll() is None:
@@ -569,12 +583,14 @@ class RecordingEngine:
         except Exception as e:
             logger.warning(f"停止 ffmpeg 进程异常: {e}")
         finally:
-            # Close stderr pipe to avoid resource leak
-            if self._ffmpeg_process and self._ffmpeg_process.stderr:
-                try:
-                    self._ffmpeg_process.stderr.close()
-                except Exception:
-                    pass
+            # Close pipes to avoid resource leaks
+            if self._ffmpeg_process:
+                for _pipe in (self._ffmpeg_process.stdin, self._ffmpeg_process.stderr):
+                    if _pipe:
+                        try:
+                            _pipe.close()
+                        except Exception:
+                            pass
             self._ffmpeg_process = None
 
     # ---- 进程监控 ----
