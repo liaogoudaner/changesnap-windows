@@ -51,7 +51,7 @@ class RegionSelector(QWidget):
             | Qt.WindowType.Tool
             | Qt.WindowType.X11BypassWindowManagerHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
         # -- Internal state ----------------------------------------------------

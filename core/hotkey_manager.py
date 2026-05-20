@@ -65,13 +65,17 @@ class HotkeyManager:
 
     # ---- 启动/停止 ----
 
-    def start(self, hotkey_map: dict[str, tuple[str, Callable]]):
+    def start(self, hotkey_map: dict[str, tuple[str, Callable]], hwnd: Optional[int] = None):
         """启动快捷键监听。
 
         Decoupled architecture:
         1. Always builds the normalized combo map (for all listeners)
         2. Starts pynput listener if available (platform-independent fallback)
         3. Always starts Win32 RegisterHotKey on Windows (does NOT depend on pynput)
+
+        Args:
+            hotkey_map: 操作名 -> (组合键字符串, 回调函数) 映射
+            hwnd: Windows 窗口句柄（用于 RegisterHotKey），传主窗口的 int(winId())
         """
         if self._running:
             return
@@ -92,7 +96,7 @@ class HotkeyManager:
             logger.info(f"pynput Listener 已启动 ({len(self._hotkey_combos)} 个)")
 
         # Start Win32 hotkeys (Windows only, does NOT depend on pynput)
-        self._start_win32_hotkeys()
+        self._start_win32_hotkeys(hwnd)
 
         logger.info(f"快捷键监听已启动")
 
@@ -165,7 +169,7 @@ class HotkeyManager:
             self._active_modifiers.clear()
             logger.info("Listener 已停止")
 
-    def _start_win32_hotkeys(self):
+    def _start_win32_hotkeys(self, hwnd: Optional[int] = None):
         """Windows-only: Register system-level hotkeys via Win32 RegisterHotKey.
 
         RegisterHotKey is the most reliable global hotkey mechanism on Windows.
@@ -174,6 +178,11 @@ class HotkeyManager:
 
         This method does NOT depend on pynput availability — it works independently
         so that hotkeys work even when pynput can't be imported (e.g. in PyInstaller bundles).
+
+        Args:
+            hwnd: Windows window handle. If None, searches for the main window.
+                  CRITICAL: Must be the same HWND that processes nativeEvent().
+                  Always prefer passing from MainWindow directly.
         """
         if sys.platform != 'win32':
             return
@@ -198,8 +207,27 @@ class HotkeyManager:
         }
 
         registered_ids: list[int] = []
-        hwnd: Optional[int] = None
         hotkey_id_counter = 0
+
+        # If no HWND provided, try to find one from the Qt app
+        if hwnd is None:
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app:
+                for widget in app.topLevelWidgets():
+                    if hasattr(widget, 'winId') and widget.isWindow():
+                        wid = widget.winId()
+                        try:
+                            hwnd = wid.__int__() if hasattr(wid, '__int__') else int(wid)
+                        except Exception:
+                            hwnd = int(wid)
+                        break
+
+        if not hwnd:
+            logger.warning("Win32: No window HWND available for RegisterHotKey")
+            return
+
+        logger.info(f"Win32: RegisterHotKey hwnd={hwnd}")
 
         for action, (combo, callback) in self._actions.items():
             # Parse modifiers and virtual key code from combo string
@@ -229,25 +257,6 @@ class HotkeyManager:
             hotkey_id = hotkey_id_counter
             modifiers |= MOD_NOREPEAT  # Prevent key repeat
 
-            # Get main window HWND (lazy, cached after first iteration)
-            if hwnd is None:
-                from PySide6.QtWidgets import QApplication
-                app = QApplication.instance()
-                if app:
-                    for widget in app.topLevelWidgets():
-                        if hasattr(widget, 'winId') and widget.isWindow():
-                            wid = widget.winId()
-                            try:
-                                hwnd = wid.__int__() if hasattr(wid, '__int__') else int(wid)
-                            except Exception:
-                                hwnd = int(wid)
-                            break
-
-            if not hwnd:
-                logger.warning("Win32: No window HWND available for RegisterHotKey")
-                continue
-
-            logger.info(f"Win32: Using HWND={hwnd} for hotkey registration")
             logger.debug(
                 f"Win32: RegisterHotKey action={action}, combo={combo}, "
                 f"hwnd={hwnd}, id={hotkey_id}, mods=0x{modifiers:04x}, vk=0x{vk:02x}"

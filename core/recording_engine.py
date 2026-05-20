@@ -254,6 +254,27 @@ class RecordingEngine:
         except Exception:
             pass
 
+        # 1.5 PyInstaller _MEIPASS — 搜索 imageio_ffmpeg 的捆绑二进制
+        if getattr(sys, 'frozen', False):
+            meipass = sys._MEIPASS
+            _search_dirs = [
+                os.path.join(meipass, 'imageio_ffmpeg', 'binaries'),
+                os.path.join(meipass, 'binaries'),
+                meipass,
+            ]
+            for _d in _search_dirs:
+                if not os.path.isdir(_d):
+                    continue
+                try:
+                    for _fn in os.listdir(_d):
+                        if (_fn.startswith('ffmpeg-') or _fn == 'ffmpeg.exe') and _fn.endswith('.exe'):
+                            _fp = os.path.join(_d, _fn)
+                            if os.path.isfile(_fp):
+                                logger.info(f"ffmpeg 在 _MEIPASS 中找到: {_fp}")
+                                return _fp
+                except Exception:
+                    continue
+
         # 2. 系统 PATH
         path = shutil.which("ffmpeg")
         if path:

@@ -832,7 +832,10 @@ class MainWindow(QMainWindow):
         }
 
         try:
-            hm.start(hotkey_map)
+            # Pass the main window's HWND so Win32 RegisterHotKey uses the
+            # SAME handle that receives nativeEvent(WM_HOTKEY) callbacks.
+            win_hwnd = int(self.winId()) if sys.platform == 'win32' else None
+            hm.start(hotkey_map, hwnd=win_hwnd)
             # Immediate status update based on registered hotkeys
             if hasattr(hm, 'has_win32_hotkeys') and hm.has_win32_hotkeys:
                 self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:暂停 | Ctrl+Shift+S:停止 (Win32)")
