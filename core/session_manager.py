@@ -377,6 +377,9 @@ class SessionManager:
         """暂停录屏。"""
         if not self._session:
             return
+        if not self._session.recording:
+            logger.warning("pause_recording: 录屏未初始化，跳过")
+            return
         self._session.recording['status'] = 'paused'
         self._session.status = SessionStatus.PAUSED
         self._mark_dirty()
@@ -384,6 +387,9 @@ class SessionManager:
     def resume_recording(self):
         """恢复录屏。"""
         if not self._session:
+            return
+        if not self._session.recording:
+            logger.warning("resume_recording: 录屏未初始化，跳过")
             return
         self._session.recording['status'] = 'recording'
         self._session.status = SessionStatus.RUNNING
@@ -406,6 +412,9 @@ class SessionManager:
     def finalize_recording(self):
         """完成录屏记录。"""
         if not self._session:
+            return
+        if not self._session.recording:
+            logger.warning("finalize_recording: 录屏未初始化，跳过")
             return
         now = datetime.now(timezone(timedelta(hours=8))).isoformat()
         self._session.recording['status'] = 'stopped'

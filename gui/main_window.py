@@ -36,6 +36,7 @@ if sys.platform == 'win32':
     from ctypes import wintypes
 
     class _WinMsg(ctypes.Structure):
+        _pack_ = 8
         _fields_ = [
             ("hwnd", wintypes.HWND),
             ("message", wintypes.UINT),
@@ -418,25 +419,37 @@ class MainWindow(QMainWindow):
             )
 
     def _do_start_session(self):
-        """实际启动变更会话。由 _start_session 调用。"""
+        """实际启动变更会话。由 _start_session 调用。
+
+        Gracefully degrades to screenshot-only mode when recording engine
+        is unavailable (ffmpeg not found or failed to start).
+        """
         try:
             self._session = self.session_manager.create_session(self._plan)
 
+            recording_ok = False
             if self.recording_engine.is_available:
                 fps = self.config.get_setting('recording_fps', 5)
                 segment = self.config.get_setting('recording_segment_minutes', 30)
-                ok = self.recording_engine.start(
-                    self._session.session_id,
-                    fps,
-                    segment,
-                    region=getattr(self, '_capture_region', None),
-                    plan_name=self._get_plan_base_name(),
-                )
-                if ok:
-                    self.session_manager.init_recording()
-                    self._rec_thread = RecordingThread(self.recording_engine)
-                    self._rec_thread.status_update.connect(self._on_recording_status)
-                    self._rec_thread.start()
+                try:
+                    ok = self.recording_engine.start(
+                        self._session.session_id,
+                        fps,
+                        segment,
+                        region=getattr(self, '_capture_region', None),
+                        plan_name=self._get_plan_base_name(),
+                    )
+                    if ok:
+                        recording_ok = True
+                        self.session_manager.init_recording()
+                        self._rec_thread = RecordingThread(self.recording_engine)
+                        self._rec_thread.status_update.connect(self._on_recording_status)
+                        self._rec_thread.start()
+                except Exception as rec_err:
+                    logger.error(f"录屏启动异常: {rec_err}")
+
+            if not recording_ok:
+                logger.warning("录屏引擎不可用，将以仅截图模式运行")
 
             self._start_hotkeys()
 
@@ -459,13 +472,16 @@ class MainWindow(QMainWindow):
             )
             self._floating_toolbar.update_count(1, total, total_ss)
             self._floating_toolbar.update_timer(0.0)
-            self._floating_toolbar.update_recording_state(True, False)
+            self._floating_toolbar.update_recording_state(recording_ok, False)
             self._floating_toolbar.show()
 
             self._btn_start.setEnabled(False)
             self._btn_stop.setEnabled(True)
             self._btn_load.setEnabled(False)
-            self._status_recording.setText("\U0001f534 录制中")
+            if recording_ok:
+                self._status_recording.setText("\U0001f534 录制中")
+            else:
+                self._status_recording.setText("⚪ 仅截图模式")
             self._status_step.setText(f"步骤: 1/{total}")
             self._lbl_supplement.setReadOnly(False)
 
@@ -765,10 +781,15 @@ class MainWindow(QMainWindow):
     # ---- 热键管理 ----
 
     def _start_hotkeys(self):
-        """启动全局快捷键（直接尝试，失败也不崩）。"""
+        """启动全局快捷键（直接尝试，失败也不崩）。
+
+        NOTE: No longer gates on pynput availability. The HotkeyManager.start()
+        method internally handles both pynput (if available) and Win32 RegisterHotKey
+        (always, on Windows) independently. Win32 hotkeys work without pynput.
+        """
         hm = self.hotkey_manager
-        if not hm or not hm.is_available:
-            self._status_hotkeys.setText("快捷键: 不可用 (pynput)")
+        if not hm:
+            self._status_hotkeys.setText("快捷键: 不可用")
             return
 
         hotkey_map = {
@@ -784,16 +805,16 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(2000, self._check_hotkey_health)
         except Exception as e:
             logger.warning(f"热键启动失败: {e}")
-            self._status_hotkeys.setText("快捷键: 启动失败 (需辅助功能权限)")
+            self._status_hotkeys.setText("快捷键: 启动失败")
 
     def _check_hotkey_health(self):
         hm = self.hotkey_manager
         if hm and hm.is_listening:
             self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:暂停 | Ctrl+Shift+S:停止")
-        elif hm and hm.is_available:
-            self._status_hotkeys.setText("快捷键: 未启动 (系统设置→隐私→辅助功能 添加 ChangeSnap)")
+        elif hm and hm.has_win32_hotkeys:
+            self._status_hotkeys.setText("Win32热键: Ctrl+8/9/7/0 | Ctrl+Shift+S")
         else:
-            self._status_hotkeys.setText("快捷键: 不可用")
+            self._status_hotkeys.setText("快捷键: 未启动")
 
     def _make_prev_step_callback(self):
         def cb():

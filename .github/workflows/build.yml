@@ -29,9 +29,11 @@ jobs:
           files = [f for f in os.listdir(d) if f.startswith('ffmpeg-')]
           if files:
               ffmpeg_path = os.path.join(d, files[0])
-              print(f"ffmpeg={ffmpeg_path}")
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   f.write(f"ffmpeg={ffmpeg_path}\n")
+          else:
+              print("::warning title=ffmpeg not found::No ffmpeg binary found "
+                    "in imageio_ffmpeg/binaries. Recording will be unavailable.")
 
       - name: Build with PyInstaller
         run: |

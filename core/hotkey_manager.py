@@ -1,8 +1,8 @@
 """全局快捷键管理模块。
 
 使用 pynput.keyboard.Listener 手动检测组合键（兼容 Python 3.14 / macOS 15 / Windows）。
-Listener 需要 macOS 辅助功能权限；Windows 上使用 pynput Listener（Win32 RegisterHotKey
-作为未来增强保留）。
+Listener 需要 macOS 辅助功能权限；Windows 上使用 Win32 RegisterHotKey（不依赖 pynput）。
+Win32 RegisterHotKey 是 Windows 上最可靠的全局热键机制，即使 pynput 不可用也能正常工作。
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ class HotkeyManager:
 
     def __init__(self, config_manager=None):
         self._listener = None
+        self._listener_thread = None
         self._running = False
         self._actions: dict[str, Callable] = {}
         self._config = config_manager
@@ -41,29 +42,41 @@ class HotkeyManager:
 
     def _check_pynput(self):
         try:
-            import pynput
+            import pynput  # noqa: F401
             self._pynput_available = True
         except ImportError:
             self._pynput_available = False
 
     @property
     def is_available(self) -> bool:
+        """Check if ANY hotkey mechanism is available (pynput or Win32)."""
+        # On Windows, Win32 RegisterHotKey is always available regardless of pynput
+        if sys.platform == 'win32':
+            return True
         return self._pynput_available
 
     @property
     def is_listening(self) -> bool:
         return self._running
 
+    @property
+    def has_win32_hotkeys(self) -> bool:
+        return len(self._win32_hotkey_ids) > 0
+
     # ---- 启动/停止 ----
 
     def start(self, hotkey_map: dict[str, tuple[str, Callable]]):
-        """启动快捷键监听。"""
-        if not self._pynput_available:
-            return
+        """启动快捷键监听。
+
+        Decoupled architecture:
+        1. Always builds the normalized combo map (for all listeners)
+        2. Starts pynput listener if available (platform-independent fallback)
+        3. Always starts Win32 RegisterHotKey on Windows (does NOT depend on pynput)
+        """
         if self._running:
             return
 
-        # 构建标准化组合键映射
+        # 构建标准化组合键映射 — 用于 ALL listeners
         for action, (key_combo, callback) in hotkey_map.items():
             self._actions[action] = (key_combo, callback)
             normalized = self._normalize_combo(key_combo)
@@ -71,12 +84,17 @@ class HotkeyManager:
             logger.info(f"注册: {action} -> {key_combo} -> {normalized}")
 
         self._running = True
-        self._listener_thread = threading.Thread(target=self._listen, daemon=True)
-        self._listener_thread.start()
-        logger.info(f"快捷键监听已启动 ({len(self._hotkey_combos)} 个)")
 
-        # 在 Windows 上附加尝试 Win32 RegisterHotKey（增强支持）
+        # Start pynput if available (works on all platforms, but may need permissions)
+        if self._pynput_available:
+            self._listener_thread = threading.Thread(target=self._listen, daemon=True)
+            self._listener_thread.start()
+            logger.info(f"pynput Listener 已启动 ({len(self._hotkey_combos)} 个)")
+
+        # Start Win32 hotkeys (Windows only, does NOT depend on pynput)
         self._start_win32_hotkeys()
+
+        logger.info(f"快捷键监听已启动")
 
     def _listen(self):
         """后台监听线程。使用 Listener（兼容 Python 3.14 / macOS 15 / Windows）。"""
@@ -153,6 +171,9 @@ class HotkeyManager:
         RegisterHotKey is the most reliable global hotkey mechanism on Windows.
         It registers hotkeys at the OS level and the system sends WM_HOTKEY
         messages to the specified window regardless of which app is active.
+
+        This method does NOT depend on pynput availability — it works independently
+        so that hotkeys work even when pynput can't be imported (e.g. in PyInstaller bundles).
         """
         if sys.platform != 'win32':
             return
@@ -173,12 +194,15 @@ class HotkeyManager:
             '9': 0x39,
             '7': 0x37,
             '0': 0x30,
+            's': 0x53,
         }
 
-        registered_count = 0
+        registered_ids: list[int] = []
+        hwnd: Optional[int] = None
+        hotkey_id_counter = 0
 
         for action, (combo, callback) in self._actions.items():
-            # Determine modifiers and virtual key
+            # Parse modifiers and virtual key code from combo string
             parts = [p.strip().lower() for p in combo.split('+')]
             modifiers = 0
             vk = 0
@@ -191,42 +215,29 @@ class HotkeyManager:
                 elif p in ('alt',):
                     modifiers |= MOD_ALT
                 else:
-                    # Single character key
+                    # Single character key — get VK from char or lookup table
                     if len(p) == 1:
-                        vk = ord(p.upper())  # Virtual key code for letters/numbers
+                        vk = ord(p.upper())
                     elif p in VK_MAP:
                         vk = VK_MAP[p]
 
             if vk == 0:
-                logger.warning(f"Win32: Could not determine VK for '{combo}'")
+                logger.warning(f"Win32: Cannot determine VK for '{combo}'")
                 continue
 
-            # Generate a unique hotkey ID
-            # Each action gets a unique ID (1-5)
-            action_ids = {
-                'screenshot_and_advance': 1,
-                'screenshot_only': 2,
-                'prev_step': 3,
-                'toggle_recording': 4,
-                'stop_session': 5,
-            }
-            hotkey_id = action_ids.get(action, registered_count + 1)
-
+            hotkey_id_counter += 1
+            hotkey_id = hotkey_id_counter
             modifiers |= MOD_NOREPEAT  # Prevent key repeat
 
-            # Get the main window's HWND
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if not app:
-                logger.warning("Win32: QApplication not available for RegisterHotKey")
-                continue
-
-            # Find the main window
-            hwnd = None
-            for widget in app.topLevelWidgets():
-                if hasattr(widget, 'winId') and widget.isWindow():
-                    hwnd = int(widget.winId())
-                    break
+            # Get main window HWND (lazy, cached after first iteration)
+            if hwnd is None:
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app:
+                    for widget in app.topLevelWidgets():
+                        if hasattr(widget, 'winId') and widget.isWindow():
+                            hwnd = int(widget.winId())
+                            break
 
             if not hwnd:
                 logger.warning("Win32: No window HWND available for RegisterHotKey")
@@ -235,19 +246,19 @@ class HotkeyManager:
             result = user32.RegisterHotKey(hwnd, hotkey_id, modifiers, vk)
             if result:
                 logger.info(f"Win32 RegisterHotKey: {combo} (id={hotkey_id}) OK")
-                registered_count += 1
+                registered_ids.append(hotkey_id)
             else:
                 err = kernel32.GetLastError()
                 logger.warning(f"Win32 RegisterHotKey failed: {combo} (err={err})")
 
-        if registered_count > 0:
-            logger.info(f"Win32 hotkeys registered: {registered_count}/{len(self._actions)}")
+        # Store for cleanup
+        self._win32_hotkey_ids = registered_ids
+        self._win32_hwnd = hwnd if hwnd else None
+
+        if registered_ids:
+            logger.info(f"Win32 hotkeys registered: {len(registered_ids)}/{len(self._actions)}")
         else:
             logger.warning("Win32: No hotkeys registered, falling back to pynput only")
-
-        # Store for cleanup
-        self._win32_hotkey_ids = list(range(1, 6))
-        self._win32_hwnd = hwnd if registered_count > 0 else None
 
     def _key_to_char(self, key) -> Optional[str]:
         """将 pynput Key 转为字符串。"""
@@ -281,10 +292,16 @@ class HotkeyManager:
         return '+'.join(sorted(normalized))
 
     def unregister_all(self):
-        """停止监听。"""
+        """停止监听并注销所有快捷键。
+
+        Safely handles both pynput and Win32 paths independently.
+        Win32 cleanup works even if pynput was never started.
+        """
         self._running = False
         self._hotkey_combos.clear()
         self._actions.clear()
+
+        # Stop pynput listener (safe even if never started)
         if self._listener:
             try:
                 self._listener.stop()
@@ -292,12 +309,15 @@ class HotkeyManager:
                 pass
             self._listener = None
 
-        # Unregister Win32 hotkeys
-        if sys.platform == 'win32' and self._win32_hwnd:
+        # Unregister Win32 hotkeys (safe even if never registered)
+        if sys.platform == 'win32' and hasattr(self, '_win32_hwnd') and self._win32_hwnd:
             import ctypes
             user32 = ctypes.windll.user32
-            for hotkey_id in self._win32_hotkey_ids:
-                user32.UnregisterHotKey(self._win32_hwnd, hotkey_id)
+            for hotkey_id in getattr(self, '_win32_hotkey_ids', []):
+                try:
+                    user32.UnregisterHotKey(self._win32_hwnd, hotkey_id)
+                except Exception:
+                    pass
             logger.info("Win32 hotkeys unregistered")
 
         logger.info("所有快捷键已注销")
