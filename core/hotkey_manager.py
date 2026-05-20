@@ -236,12 +236,22 @@ class HotkeyManager:
                 if app:
                     for widget in app.topLevelWidgets():
                         if hasattr(widget, 'winId') and widget.isWindow():
-                            hwnd = int(widget.winId())
+                            wid = widget.winId()
+                            try:
+                                hwnd = wid.__int__() if hasattr(wid, '__int__') else int(wid)
+                            except Exception:
+                                hwnd = int(wid)
                             break
 
             if not hwnd:
                 logger.warning("Win32: No window HWND available for RegisterHotKey")
                 continue
+
+            logger.info(f"Win32: Using HWND={hwnd} for hotkey registration")
+            logger.debug(
+                f"Win32: RegisterHotKey action={action}, combo={combo}, "
+                f"hwnd={hwnd}, id={hotkey_id}, mods=0x{modifiers:04x}, vk=0x{vk:02x}"
+            )
 
             result = user32.RegisterHotKey(hwnd, hotkey_id, modifiers, vk)
             if result:
@@ -249,7 +259,13 @@ class HotkeyManager:
                 registered_ids.append(hotkey_id)
             else:
                 err = kernel32.GetLastError()
-                logger.warning(f"Win32 RegisterHotKey failed: {combo} (err={err})")
+                error_msgs = {
+                    1409: "Hot key already registered (1409/0x581)",
+                    87:   "Invalid parameter (87/0x57)",
+                    1400: "Invalid window handle (1400/0x578)",
+                }
+                err_desc = error_msgs.get(err, f"Unknown error ({err})")
+                logger.warning(f"Win32 RegisterHotKey failed: {combo} (id={hotkey_id}) - {err_desc}")
 
         # Store for cleanup
         self._win32_hotkey_ids = registered_ids

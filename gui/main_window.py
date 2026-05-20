@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self._step_widgets = {}
         self._screenshot_labels = []
         self._floating_toolbar = None
+        self._save_recording = False  # 默认不保存录像（checkbox 同步此值）
 
         # 审核模式
         self._review_mode = False
@@ -220,6 +221,13 @@ class MainWindow(QMainWindow):
         for btn in [self._btn_load, self._btn_start, self._btn_stop, self._btn_report]:
             btn.setMinimumHeight(36)
             toolbar.addWidget(btn)
+
+        # 保存录像 checkbox
+        self._chk_save_recording = QCheckBox("保存录像")
+        self._chk_save_recording.setChecked(False)
+        self._chk_save_recording.setToolTip("勾选后录制的视频文件将保留，否则停止后自动删除")
+        toolbar.addWidget(self._chk_save_recording)
+
         toolbar.addStretch()
 
         self._lbl_plan_info = QLabel("尚未加载方案")
@@ -510,6 +518,18 @@ class MainWindow(QMainWindow):
 
         self.recording_engine.stop()
 
+        # Handle recording files based on save preference
+        if self._chk_save_recording and not self._chk_save_recording.isChecked():
+            plan_name = self._get_plan_base_name()
+            output_dir = get_plan_output_dir(plan_name)
+            if output_dir.exists():
+                for mp4 in output_dir.glob("*.mp4"):
+                    try:
+                        mp4.unlink()
+                        logger.info(f"已删除录像: {mp4.name}")
+                    except Exception as e:
+                        logger.warning(f"删除录像失败: {e}")
+
         # 停止热键
         if self.hotkey_manager:
             self.hotkey_manager.unregister_all()
@@ -572,6 +592,17 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.critical(self, "生成失败", result.get('error', '未知错误'))
+
+        # Rename recording video if save_recording is checked
+        if self._chk_save_recording and self._chk_save_recording.isChecked():
+            mp4_files = list(output_dir.glob("*.mp4")) if output_dir.exists() else []
+            if mp4_files:
+                new_name = output_dir / f"{plan_name}变更录像.mp4"
+                try:
+                    mp4_files[0].rename(new_name)
+                    logger.info(f"录像已重命名: {new_name.name}")
+                except Exception as e:
+                    logger.warning(f"重命名录像失败: {e}")
 
     def _save_supplement(self):
         """保存补充说明到会话。"""
@@ -802,6 +833,9 @@ class MainWindow(QMainWindow):
 
         try:
             hm.start(hotkey_map)
+            # Immediate status update based on registered hotkeys
+            if hasattr(hm, 'has_win32_hotkeys') and hm.has_win32_hotkeys:
+                self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:暂停 | Ctrl+Shift+S:停止 (Win32)")
             QTimer.singleShot(2000, self._check_hotkey_health)
         except Exception as e:
             logger.warning(f"热键启动失败: {e}")
@@ -1369,6 +1403,7 @@ class MainWindow(QMainWindow):
             msg = _WinMsg.from_address(int(message))
             if msg.message == WM_HOTKEY:
                 hotkey_id = msg.wParam
+                logger.debug(f"WM_HOTKEY received: id={hotkey_id}")
                 if hotkey_id == 1:
                     self._toolbar_capture()
                 elif hotkey_id == 2:
