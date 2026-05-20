@@ -1,4 +1,10 @@
-"""文件操作工具函数。"""
+"""文件操作工具函数。
+
+与 macOS 版本保持一致：
+- 工作目录优先使用 CHANGESNAP_HOME 环境变量
+- 录屏和报告保存到 outputs/<planName>/ 目录
+- 截图表单到 screenshots/<sessionId>/ 目录
+"""
 
 from __future__ import annotations
 
@@ -17,7 +23,14 @@ def get_app_root() -> Path:
 
 
 def get_work_dir() -> Path:
-    """获取工作目录。"""
+    """获取工作目录。
+
+    优先使用 CHANGESNAP_HOME 环境变量（跨平台兼容，与 macOS 版本保持一致），
+    若未设置则使用默认路径 ~/changesnap。
+    """
+    home = os.environ.get('CHANGESNAP_HOME')
+    if home:
+        return Path(home)
     return Path(os.path.expanduser("~/changesnap"))
 
 
@@ -98,13 +111,32 @@ def get_step_screenshots_dir(session_id: str, step_id: str) -> Path:
 
 
 def get_recordings_dir(session_id: str) -> Path:
-    """获取录屏保存目录。"""
+    """获取录屏保存目录。
+
+    新版录屏已迁移到 outputs/<planName>/ 目录（见 get_plan_output_dir），
+    此函数保留向后兼容。
+    """
     return ensure_dir(get_work_dir() / 'recordings' / session_id)
 
 
 def get_outputs_dir() -> Path:
     """获取报告输出目录。"""
     return ensure_dir(get_work_dir() / 'outputs')
+
+
+def get_plan_output_dir(plan_name: str) -> Path:
+    """获取指定方案的工作输出目录。
+
+    与 macOS 版本保持一致：
+    - outputs/<planName>/            — 方案专属输出目录
+    - outputs/<planName>/recording_XXX.mp4     — 录屏分段文件
+    - outputs/<planName>/[总结报告]<planName>.docx  — 总结报告
+    - outputs/<planName>/[变更录像]<planName>.mp4   — 最终合版录像
+
+    Args:
+        plan_name: 方案名称（将被自动 sanitize）
+    """
+    return ensure_dir(get_outputs_dir() / safe_filename(plan_name))
 
 
 def get_logs_dir() -> Path:

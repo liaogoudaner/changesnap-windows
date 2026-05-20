@@ -4,6 +4,9 @@
 macOS 通过 AVFoundation 捕获，Windows 通过 gdigrab 捕获。
 ffmpeg 二进制由 imageio-ffmpeg 提供（同时搜索系统路径），无需外部安装。
 所有操作异常安全，不会导致进程崩溃。
+
+输出路径与 macOS 版本保持一致：
+    outputs/<planName>/recording_XXX.mp4
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from utils.file_utils import ensure_dir, get_recordings_dir
+from utils.file_utils import ensure_dir, get_work_dir, safe_filename
 from utils.log_utils import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +35,7 @@ class RecordingEngine:
         self._running = False
         self._paused = False
         self._session_id = ""
+        self._plan_name = ""
         self._fps = 5
         self._segment_minutes = 30
         self._current_segment = 0
@@ -44,6 +48,7 @@ class RecordingEngine:
         self._segment_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
         self._checked_available: Optional[bool] = None
+        self._region: Optional[dict] = None
 
     # ---- 公开属性 ----
 
@@ -73,13 +78,22 @@ class RecordingEngine:
 
     # ---- 公开方法 ----
 
-    def start(self, session_id: str, fps: int = 5, segment_minutes: int = 30) -> bool:
+    def start(
+        self,
+        session_id: str,
+        fps: int = 5,
+        segment_minutes: int = 30,
+        region: Optional[dict] = None,
+        plan_name: str = "",
+    ) -> bool:
         """开始录制。
 
         Args:
             session_id: 会话 ID
             fps: 帧率 (1-30)
             segment_minutes: 分段切换间隔（分钟）
+            region: 区域选择 dict，包含 left, top, width, height（屏幕坐标）
+            plan_name: 方案名称，用于构造 outputs/<planName>/ 输出路径
 
         Returns:
             是否成功启动
@@ -91,6 +105,8 @@ class RecordingEngine:
                 return False
             try:
                 self._session_id = session_id
+                self._plan_name = plan_name or session_id
+                self._region = region
                 self._fps = max(1, min(fps, 30))
                 self._segment_minutes = max(1, segment_minutes)
                 self._current_segment = 1
@@ -98,11 +114,7 @@ class RecordingEngine:
                 self._paused = False
                 self._start_time = time.time()
 
-                recordings_dir = get_recordings_dir(session_id)
-                ensure_dir(recordings_dir)
-                self._output_path = str(
-                    recordings_dir / f"recording_{self._current_segment:03d}.mp4"
-                )
+                self._output_path = self._build_output_path(self._current_segment)
 
                 if not self._start_ffmpeg(self._output_path):
                     self._running = False
@@ -111,8 +123,9 @@ class RecordingEngine:
                 self._start_monitor()
                 self._start_segment_timer()
                 logger.info(
-                    f"录屏已开始 (session={session_id}, fps={self._fps}, "
-                    f"segment={self._segment_minutes}min)"
+                    f"录屏已开始 (session={session_id}, plan={self._plan_name}, "
+                    f"fps={self._fps}, segment={self._segment_minutes}min, "
+                    f"region={region})"
                 )
                 return True
             except Exception as e:
@@ -171,10 +184,7 @@ class RecordingEngine:
             try:
                 self._paused = False
                 self._current_segment += 1
-                recordings_dir = get_recordings_dir(self._session_id)
-                self._output_path = str(
-                    recordings_dir / f"recording_{self._current_segment:03d}.mp4"
-                )
+                self._output_path = self._build_output_path(self._current_segment)
 
                 if not self._start_ffmpeg(self._output_path):
                     self._running = False
@@ -332,6 +342,22 @@ class RecordingEngine:
         # 在 macOS 上，屏幕设备通常是索引 1（索引 0 通常是摄像头）
         return None
 
+    # ---- 路径构建 ----
+
+    def _build_output_path(self, segment_id: int) -> str:
+        """构建录屏分段输出路径。
+
+        路径格式（与 macOS 版本保持一致）:
+            outputs/<planName>/recording_XXX.mp4
+
+        Args:
+            segment_id: 分段编号（1-based）
+        """
+        output_dir = ensure_dir(
+            get_work_dir() / 'outputs' / safe_filename(self._plan_name)
+        )
+        return str(output_dir / f"recording_{segment_id:03d}.mp4")
+
     # ---- ffmpeg 进程管理 ----
 
     def _get_ffmpeg_path(self) -> Optional[str]:
@@ -426,8 +452,11 @@ class RecordingEngine:
         ]
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
-        """构建 Windows gdigrab 录屏命令。"""
-        return [
+        """构建 Windows gdigrab 录屏命令。
+
+        当设置了 region 时，会添加 crop 滤镜裁剪录制区域。
+        """
+        cmd = [
             ffmpeg_path,
             "-y",
             "-loglevel",
@@ -448,8 +477,24 @@ class RecordingEngine:
             "-crf",
             "28",
             "-an",
-            output_path,
         ]
+
+        # 如果设置了录制区域，添加 crop 滤镜
+        # crop 格式: crop=width:height:x:y  (x,y 为左上角坐标)
+        region = self._region
+        if region:
+            crop_w = region.get('width', 0)
+            crop_h = region.get('height', 0)
+            crop_x = region.get('left', 0)
+            crop_y = region.get('top', 0)
+            if crop_w > 0 and crop_h > 0:
+                cmd.extend(["-vf", f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"])
+                logger.info(
+                    f"应用裁剪区域: crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
+                )
+
+        cmd.append(output_path)
+        return cmd
 
     def _stop_ffmpeg(self, sigint_first: bool = True):
         """停止 ffmpeg 子进程。
@@ -564,7 +609,7 @@ class RecordingEngine:
         """切换到下一个分段文件。
 
         停止当前 ffmpeg 进程并启动一个新进程写入下一个分段文件。
-        分段文件按 recording_001.mp4, recording_002.mp4 等命名。
+        输出路径与 macOS 版本保持一致：outputs/<planName>/recording_XXX.mp4
         """
         with self._lock:
             if not self._running or self._paused:
@@ -574,10 +619,7 @@ class RecordingEngine:
                 self._stop_ffmpeg(sigint_first=True)
                 self._current_segment += 1
 
-                recordings_dir = get_recordings_dir(self._session_id)
-                self._output_path = str(
-                    recordings_dir / f"recording_{self._current_segment:03d}.mp4"
-                )
+                self._output_path = self._build_output_path(self._current_segment)
 
                 if not self._start_ffmpeg(self._output_path):
                     self._running = False

@@ -9,13 +9,13 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTreeWidget, QTreeWidgetItem, QLabel, QPushButton, QTextEdit,
     QFileDialog, QMessageBox, QGroupBox, QScrollArea, QCheckBox,
-    QStatusBar, QApplication, QFrame, QGridLayout,
+    QStatusBar, QApplication, QFrame, QGridLayout, QLineEdit,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QPixmap, QFont, QAction, QKeySequence
 
 from models.change_plan import ChangePlan, StepGroup, Step, BasicInfo, TimePersonnel
-from models.session import SessionState, SessionStep
+from models.session import SessionState, SessionStep, SessionSummary
 from models.screenshot import ScreenshotMeta
 from core.config import ConfigManager
 from core.plan_parser import PlanParser
@@ -25,7 +25,9 @@ from core.recording_engine import RecordingEngine
 from core.hotkey_manager import HotkeyManager
 from core.report_generator import ReportGenerator
 from utils.log_utils import get_logger
+from utils.file_utils import safe_filename, get_plan_output_dir
 from gui.tray import SystemTray, create_app_icon
+from gui.floating_toolbar import MiniFloatingWindow
 
 logger = get_logger(__name__)
 
@@ -50,63 +52,6 @@ class RecordingThread(QThread):
 
     def stop(self):
         self._running = False
-
-
-class FloatingToolbar(QWidget):
-    """浮动操作栏 — 始终置顶，无需权限。"""
-
-    def __init__(self, parent=None, on_capture=None, on_capture_only=None,
-                 on_prev=None, on_stop=None):
-        super().__init__(None)
-        self.setWindowTitle("ChangeSnap 操作栏")
-        self.setFixedSize(500, 100)
-        self.setWindowFlags(
-            Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.setStyleSheet("""
-            QWidget { background: #1a1a2e; border-radius: 12px; }
-            QLabel { color: white; font-size: 12px; }
-            QPushButton {
-                background: #16213e; color: white; border: 2px solid #0f3460;
-                border-radius: 8px; padding: 8px 14px; font-size: 13px; min-width: 70px;
-            }
-            QPushButton:hover { background: #0f3460; border-color: #e94560; }
-            QPushButton:pressed { background: #e94560; }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-
-        self._step_label = QLabel("步骤 1/5")
-        self._step_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._step_label)
-
-        btn_row = QHBoxLayout()
-        btn_cap = QPushButton("📷 截图+前进")
-        btn_cap.clicked.connect(on_capture or (lambda: None))
-        btn_cap_only = QPushButton("📷 仅截图")
-        btn_cap_only.clicked.connect(on_capture_only or (lambda: None))
-        btn_prev = QPushButton("⬅ 上一步")
-        btn_prev.clicked.connect(on_prev or (lambda: None))
-        btn_stop = QPushButton("⏹ 停止")
-        btn_stop.setStyleSheet(btn_stop.styleSheet() +
-            "QPushButton { background: #7f1d1d; border-color: #dc2626; }"
-            "QPushButton:hover { background: #991b1b; }")
-        btn_stop.clicked.connect(on_stop or (lambda: None))
-
-        for b in [btn_cap, btn_cap_only, btn_prev, btn_stop]:
-            btn_row.addWidget(b)
-        layout.addLayout(btn_row)
-
-        screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() // 2 - 250, 60)
-
-    def update_step(self, text: str):
-        self._step_label.setText(text)
-
-    def closeEvent(self, event):
-        pass
 
 
 class MainWindow(QMainWindow):
@@ -144,10 +89,15 @@ class MainWindow(QMainWindow):
 
         # 状态
         self._plan = None
+        self._plan_filepath = None  # 方案源文件路径，用于命名输出目录
         self._session = None
         self._step_widgets = {}
         self._screenshot_labels = []
         self._floating_toolbar = None
+
+        # 审核模式
+        self._review_mode = False
+        self._review_widgets = {}
 
         # 定时器
         self._status_timer = QTimer(self)
@@ -160,6 +110,9 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
         self.screenshot_captured.connect(self._on_screenshot_captured)
         self._trigger_capture.connect(self._on_trigger_capture)
+
+        # 检查未完成的会话（延迟执行，等待 UI 完全初始化）
+        QTimer.singleShot(500, self._check_incomplete_sessions)
 
     # ---- 延迟加载属性 ----
 
@@ -233,7 +186,7 @@ class MainWindow(QMainWindow):
 
         # 工具栏区域
         toolbar = QHBoxLayout()
-        self._btn_load = QPushButton("📂 加载方案")
+        self._btn_load = QPushButton("\U0001f4c2 加载方案")
         self._btn_load.clicked.connect(self._load_plan)
         self._btn_start = QPushButton("▶ 开始变更")
         self._btn_start.clicked.connect(self._start_session)
@@ -241,7 +194,7 @@ class MainWindow(QMainWindow):
         self._btn_stop = QPushButton("⏹ 停止")
         self._btn_stop.clicked.connect(self._stop_session)
         self._btn_stop.setEnabled(False)
-        self._btn_report = QPushButton("📝 生成报告")
+        self._btn_report = QPushButton("\U0001f4dd 生成报告")
         self._btn_report.clicked.connect(self._generate_report)
         self._btn_report.setEnabled(False)
 
@@ -273,14 +226,14 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._step_tree)
         splitter.addWidget(left_panel)
 
-        # 右侧：步骤详情 + 截图
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(8, 0, 0, 0)
+        # 右侧：步骤详情 + 截图（会被审核面板替换）
+        self._right_panel = QWidget()
+        self._right_layout = QVBoxLayout(self._right_panel)
+        self._right_layout.setContentsMargins(8, 0, 0, 0)
 
         # 步骤详情
-        detail_group = QGroupBox("步骤详情")
-        detail_grid = QGridLayout(detail_group)
+        self._detail_group = QGroupBox("步骤详情")
+        detail_grid = QGridLayout(self._detail_group)
         self._lbl_step_title = QLabel("选择一个步骤查看详情")
         self._lbl_step_title.setFont(QFont(FONT_CN, 14, QFont.Bold))
         detail_grid.addWidget(self._lbl_step_title, 0, 0, 1, 2)
@@ -303,11 +256,11 @@ class MainWindow(QMainWindow):
         detail_grid.addWidget(QLabel("补充说明:"), 3, 0)
         detail_grid.addWidget(self._lbl_supplement, 3, 1)
 
-        right_layout.addWidget(detail_group)
+        self._right_layout.addWidget(self._detail_group)
 
         # 截图区域
-        ss_group = QGroupBox("截图记录")
-        ss_layout = QVBoxLayout(ss_group)
+        self._ss_group = QGroupBox("截图记录")
+        ss_layout = QVBoxLayout(self._ss_group)
         self._ss_scroll = QScrollArea()
         self._ss_scroll.setWidgetResizable(True)
         self._ss_container = QWidget()
@@ -316,9 +269,9 @@ class MainWindow(QMainWindow):
         self._ss_scroll.setWidget(self._ss_container)
         self._ss_scroll.setMinimumHeight(200)
         ss_layout.addWidget(self._ss_scroll)
-        right_layout.addWidget(ss_group)
+        self._right_layout.addWidget(self._ss_group)
 
-        splitter.addWidget(right_panel)
+        splitter.addWidget(self._right_panel)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
         root.addWidget(splitter, 1)
@@ -355,6 +308,7 @@ class MainWindow(QMainWindow):
 
         try:
             self._plan = self.plan_parser.parse(Path(file_path))
+            self._plan_filepath = Path(file_path)
         except Exception as e:
             QMessageBox.critical(self, "解析失败", str(e))
             return
@@ -409,6 +363,20 @@ class MainWindow(QMainWindow):
             self._lbl_step_person.setText(f"实施: {step.implementer or '-'}  审核: {step.reviewer or '-'}")
             self._lbl_step_desc.setText(step.description)
 
+    def _get_plan_base_name(self) -> str:
+        """获取方案基础名称（用于目录和文件命名）。
+
+        PlanBaseName = source file name without extension, or product name sanitized.
+        与 macOS 版本保持一致：
+        - outputs/<planBaseName>/recording_XXX.mp4
+        - outputs/<planBaseName>/[总结报告]<planBaseName>.docx
+        """
+        if self._plan_filepath:
+            return self._plan_filepath.stem
+        if self._plan and self._plan.basic_info.product_name:
+            return self._plan.basic_info.product_name
+        return "未知方案"
+
     def _start_session(self):
         """开始变更。使用 Windows 原生 PySide6 区域选择器。"""
         if not self._plan:
@@ -439,7 +407,13 @@ class MainWindow(QMainWindow):
             if self.recording_engine.is_available:
                 fps = self.config.get_setting('recording_fps', 5)
                 segment = self.config.get_setting('recording_segment_minutes', 30)
-                ok = self.recording_engine.start(self._session.session_id, fps, segment)
+                ok = self.recording_engine.start(
+                    self._session.session_id,
+                    fps,
+                    segment,
+                    region=getattr(self, '_capture_region', None),
+                    plan_name=self._get_plan_base_name(),
+                )
                 if ok:
                     self.session_manager.init_recording()
                     self._rec_thread = RecordingThread(self.recording_engine)
@@ -448,20 +422,33 @@ class MainWindow(QMainWindow):
 
             self._start_hotkeys()
 
-            self._floating_toolbar = FloatingToolbar(
-                on_capture=self._toolbar_capture,
+            # 创建浮动操作栏 — MiniFloatingWindow (220px 垂直面板)
+            current_step = self._session.get_current_step()
+            total = self._session.total_steps
+            all_steps = self._session.get_all_steps()
+            total_ss = sum(len(s.screenshots) for s in all_steps)
+
+            self._floating_toolbar = MiniFloatingWindow(
+                on_capture_and_advance=self._toolbar_capture,
                 on_capture_only=self._toolbar_capture_only,
                 on_prev=self._toolbar_prev,
+                on_toggle_pause=self._toolbar_toggle_pause,
                 on_stop=self._toolbar_stop,
             )
-            self._floating_toolbar.update_step(f"步骤 1/{self._session.total_steps}")
+            self._floating_toolbar.update_step(f"步骤 1/{total}")
+            self._floating_toolbar.update_description(
+                current_step.description if current_step else ""
+            )
+            self._floating_toolbar.update_count(1, total, total_ss)
+            self._floating_toolbar.update_timer(0.0)
+            self._floating_toolbar.update_recording_state(True, False)
             self._floating_toolbar.show()
 
             self._btn_start.setEnabled(False)
             self._btn_stop.setEnabled(True)
             self._btn_load.setEnabled(False)
-            self._status_recording.setText("🔴 录制中")
-            self._status_step.setText(f"步骤: 1/{self._session.total_steps}")
+            self._status_recording.setText("\U0001f534 录制中")
+            self._status_step.setText(f"步骤: 1/{total}")
             self._lbl_supplement.setReadOnly(False)
 
             logger.info(f"变更已开始: {self._session.session_id}")
@@ -510,17 +497,34 @@ class MainWindow(QMainWindow):
 
         logger.info(f"变更已停止: {self._session.session_id}")
 
+        # 进入审核面板模式
+        self._show_review_panel()
+
     def _generate_report(self):
-        """生成总结报告。"""
+        """生成总结报告。
+
+        输出路径与 macOS 版本保持一致：
+            outputs/<planBaseName>/[总结报告]<planBaseName>.docx
+        """
         if not self._session:
             return
+
+        # 保存审核面板中的总结数据
+        if self._review_mode:
+            self._save_summary()
 
         # 保存补充说明
         self._save_supplement()
 
+        # 与 macOS 版本一致的目录和文件命名
+        plan_name = self._get_plan_base_name()
+        safe_name = safe_filename(plan_name)
+        output_dir = get_plan_output_dir(plan_name)  # 创建 outputs/<planName>/
+        default_path = str(output_dir / f"[总结报告]{safe_name}.docx")
+
         file_path, _ = QFileDialog.getSaveFileName(
             self, "保存总结报告",
-            str(Path.home() / "Downloads" / f"{self._plan.basic_info.product_name}变更总结报告.docx"),
+            default_path,
             "Word 文档 (*.docx)"
         )
         if not file_path:
@@ -594,13 +598,25 @@ class MainWindow(QMainWindow):
             total = self._session.total_steps
             self._status_step.setText(f"步骤: {idx}/{total}")
             if self._floating_toolbar:
+                current_step = self._session.get_current_step()
+                all_steps = self._session.get_all_steps()
+                total_ss = sum(len(s.screenshots) for s in all_steps)
+                self._floating_toolbar.update_count(idx, total, total_ss)
                 self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
+                if current_step:
+                    self._floating_toolbar.update_description(current_step.description)
             self._refresh_screenshots()
 
     def _toolbar_capture_only(self):
         """浮动栏：仅截图。"""
         cb = self._make_screenshot_callback(False)
         cb()
+        if self._floating_toolbar and self._session:
+            all_steps = self._session.get_all_steps()
+            total_ss = sum(len(s.screenshots) for s in all_steps)
+            idx = self._session.current_step_index + 1
+            total = self._session.total_steps
+            self._floating_toolbar.update_count(idx, total, total_ss)
         self._refresh_screenshots()
 
     def _toolbar_prev(self):
@@ -611,19 +627,25 @@ class MainWindow(QMainWindow):
             total = self._session.total_steps
             self._status_step.setText(f"步骤: {idx}/{total}")
             if self._floating_toolbar:
+                current_step = self._session.get_current_step()
+                all_steps = self._session.get_all_steps()
+                total_ss = sum(len(s.screenshots) for s in all_steps)
+                self._floating_toolbar.update_count(idx, total, total_ss)
                 self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
+                if current_step:
+                    self._floating_toolbar.update_description(current_step.description)
 
     def _toolbar_stop(self):
         """浮动栏：停止。"""
         self._stop_session()
 
     def _toolbar_toggle_pause(self):
-        """暂停/恢复录屏（托盘菜单）。"""
+        """暂停/恢复录屏。"""
         re = self.recording_engine
         if re.is_paused:
             re.resume()
             self.session_manager.resume_recording()
-            self._status_recording.setText("🔴 录制中")
+            self._status_recording.setText("\U0001f534 录制中")
             if self._session:
                 self._tray.update_state(
                     'running',
@@ -631,6 +653,8 @@ class MainWindow(QMainWindow):
                     total=self._session.total_steps,
                     elapsed=re.elapsed_seconds,
                 )
+            if self._floating_toolbar:
+                self._floating_toolbar.update_recording_state(True, False)
         elif re.is_recording:
             re.pause()
             self.session_manager.pause_recording()
@@ -641,6 +665,8 @@ class MainWindow(QMainWindow):
                     step_idx=self._session.current_step_index + 1,
                     total=self._session.total_steps,
                 )
+            if self._floating_toolbar:
+                self._floating_toolbar.update_recording_state(True, True)
 
     def _on_screenshot_captured(self, step_id: str, meta: ScreenshotMeta):
         """截图完成后的 UI 更新。"""
@@ -650,6 +676,9 @@ class MainWindow(QMainWindow):
             total = self._session.total_steps
             self._status_step.setText(f"步骤: {idx}/{total}")
             if self._floating_toolbar:
+                all_steps = self._session.get_all_steps()
+                total_ss = sum(len(s.screenshots) for s in all_steps)
+                self._floating_toolbar.update_count(idx, total, total_ss)
                 self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
 
     def _refresh_screenshots(self):
@@ -704,7 +733,7 @@ class MainWindow(QMainWindow):
                     ts_str = dt.strftime('%H:%M:%S')
                 except (ValueError, TypeError):
                     ts_str = str(ts)
-                layout.addWidget(QLabel(f"🕐 {ts_str}"))
+                layout.addWidget(QLabel(f"\U0001f550 {ts_str}"))
 
             # 保留勾选
             cb = QCheckBox("保留")
@@ -779,11 +808,14 @@ class MainWindow(QMainWindow):
     # ---- 状态刷新 ----
 
     def _refresh_status(self):
-        """每秒刷新状态栏。"""
+        """每秒刷新状态栏和浮动栏的计时器。"""
         re = self.recording_engine
         if re and re.is_recording:
             elapsed = re.elapsed_seconds
             self._status_timer.setText(self._format_elapsed(elapsed))
+            # 同步浮动栏计时器
+            if self._floating_toolbar:
+                self._floating_toolbar.update_timer(elapsed)
             # Update tray with current elapsed time and step
             if self._session:
                 idx = self._session.current_step_index + 1
@@ -808,7 +840,7 @@ class MainWindow(QMainWindow):
     def _on_recording_status(self, status: dict):
         """录屏状态更新回调。"""
         if status.get('is_recording'):
-            self._status_recording.setText("🔴 录制中")
+            self._status_recording.setText("\U0001f534 录制中")
         elif status.get('is_paused'):
             self._status_recording.setText("⏸ 已暂停")
 
@@ -829,6 +861,463 @@ class MainWindow(QMainWindow):
             "加载 Word/Excel 变更方案 → 录制屏幕 + 快捷键截图 → 一键生成总结报告\n\n"
             "跨平台: macOS / Windows"
         )
+
+    # ---- 会话崩溃恢复（Task 1） ----
+
+    def _check_incomplete_sessions(self):
+        """启动时检测未完成会话，提供恢复/放弃/忽略选项。
+
+        调用 SessionManager.find_incomplete_sessions() 扫描 ~/.session/ 下所有
+        未完成会话，展示最近一个会话的恢复对话框。
+        """
+        sessions = self.session_manager.find_incomplete_sessions()
+        if not sessions:
+            logger.debug("未发现未完成的会话")
+            return
+
+        recent = sessions[0]
+        product_name = recent.get('product_name', '未知方案')
+        updated_at = recent.get('updated_at', '未知时间')
+
+        reply = QMessageBox.question(
+            self,
+            "检测到未完成的会话",
+            f"产品: {product_name}\n时间: {updated_at}\n\n是否恢复？",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+        )
+
+        if reply == QMessageBox.Yes:
+            # "恢复" — 加载会话并恢复状态
+            session = self.session_manager.load_session(recent['session_id'])
+            if session:
+                self._session = session
+
+                # 从会话数据恢复方案对象
+                parsed = session.plan_file.get('parsed')
+                if isinstance(parsed, dict):
+                    self._plan = ChangePlan.from_dict(parsed)
+                    self._populate_step_tree()
+                    self._lbl_plan_info.setText(
+                        f"{self._plan.basic_info.product_name} | "
+                        f"{self._plan.time_personnel.change_time} | "
+                        f"{self._plan.total_steps()} 步骤"
+                    )
+
+                self._btn_start.setEnabled(False)
+                self._btn_load.setEnabled(False)
+
+                if session.status in ('running', 'paused'):
+                    # 恢复录制/暂停模式
+                    self._btn_stop.setEnabled(True)
+                    self._lbl_supplement.setReadOnly(False)
+                    self._status_recording.setText(
+                        "\U0001f534 录制中" if session.status == 'running' else "⏸ 已暂停"
+                    )
+                    self._start_hotkeys()
+                elif session.status == 'reviewing':
+                    # 恢复审核模式
+                    self._btn_report.setEnabled(True)
+                    self._show_review_panel()
+
+                self._refresh_screenshots()
+                logger.info(f"已恢复会话: {recent['session_id']} ({session.status})")
+
+        elif reply == QMessageBox.No:
+            # "放弃" — 标记为已放弃
+            self.session_manager.mark_abandoned(recent['session_id'])
+            logger.info(f"已放弃会话: {recent['session_id']}")
+        # "忽略" (Cancel) — 不执行任何操作
+
+    # ---- 审核面板（Task 2） ----
+
+    def _show_review_panel(self):
+        """将右侧面板切换为审核模式，替换步骤详情和截图区域。
+
+        展示：
+        1. 变更概况（统计卡片 + 概况总结 + 总结改进 + 人员字段）
+        2. 步骤审核（各步骤缩略图，点击切换保留/取消保留）
+        3. "生成报告" 按钮
+        """
+        if self._review_mode:
+            return
+        self._review_mode = True
+
+        # 从布局中移除旧面板组件
+        self._right_layout.removeWidget(self._detail_group)
+        self._right_layout.removeWidget(self._ss_group)
+        self._detail_group.hide()
+        self._ss_group.hide()
+
+        # 创建审核滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+
+        # 1. 汇总卡片
+        summary_group = self._build_summary_section()
+        content_layout.addWidget(summary_group)
+
+        # 2. 步骤审核区域
+        step_section = self._build_step_review_section()
+        content_layout.addWidget(step_section)
+        self._review_widgets['step_section'] = step_section
+
+        # 3. "生成报告" 按钮
+        generate_btn = QPushButton("\U0001f4dd 生成报告")
+        generate_btn.setMinimumHeight(40)
+        generate_btn.setStyleSheet("""
+            QPushButton {
+                background: #2563eb; color: white; border: none;
+                border-radius: 8px; font-size: 15px; font-weight: bold;
+                padding: 10px;
+            }
+            QPushButton:hover { background: #1d4ed8; }
+            QPushButton:pressed { background: #1e40af; }
+        """)
+        generate_btn.clicked.connect(self._on_review_generate)
+        content_layout.addWidget(generate_btn)
+
+        content_layout.addStretch()
+
+        scroll.setWidget(content)
+        self._right_layout.addWidget(scroll)
+
+        self._review_widgets['scroll'] = scroll
+        self._review_widgets['content'] = content
+        self._review_widgets['generate_btn'] = generate_btn
+
+        logger.info("已切换到审核面板")
+
+    def _on_review_generate(self):
+        """审核面板 "生成报告" 按钮回调。
+
+        先保存总结数据，再调用 _generate_report()。
+        """
+        self._save_summary()
+        self._generate_report()
+
+    def _build_summary_section(self) -> QGroupBox:
+        """构建审核面板的变更概况区域。
+
+        包含：
+        - 统计卡片（产品名称、变更时间、实际耗时、截图数量）
+        - 概况总结 QTextEdit（可编辑，textChanged 自动保存）
+        - 总结改进 QTextEdit（可编辑，textChanged 自动保存）
+        - 人员字段（实施人/测试人/审核人 QLineEdit，textChanged 自动保存）
+        """
+        group = QGroupBox("变更概况")
+        layout = QVBoxLayout(group)
+
+        # ---- 统计卡片 ----
+        stats_text = self._build_stats_text()
+        stats_label = QLabel(stats_text)
+        stats_label.setStyleSheet("""
+            font-size: 13px; padding: 12px; background: #f0f4ff;
+            border-radius: 6px; border: 1px solid #dbeafe;
+            line-height: 1.6;
+        """)
+        stats_label.setWordWrap(True)
+        layout.addWidget(stats_label)
+
+        # ---- 概况总结 ----
+        layout.addWidget(QLabel("概况总结:"))
+        overview_edit = QTextEdit()
+        overview_edit.setPlaceholderText("输入变更概况总结（可选）...")
+        overview_edit.setMaximumHeight(120)
+        if self._session and self._session.summary and self._session.summary.overview:
+            overview_edit.setText(self._session.summary.overview)
+        overview_edit.textChanged.connect(self._save_summary)
+        layout.addWidget(overview_edit)
+        self._review_widgets['overview_edit'] = overview_edit
+
+        # ---- 总结改进 ----
+        layout.addWidget(QLabel("总结改进:"))
+        improvements_edit = QTextEdit()
+        improvements_edit.setPlaceholderText("输入总结和改进建议（可选）...")
+        improvements_edit.setMaximumHeight(120)
+        if self._session and self._session.summary and self._session.summary.improvements:
+            improvements_edit.setText(self._session.summary.improvements)
+        improvements_edit.textChanged.connect(self._save_summary)
+        layout.addWidget(improvements_edit)
+        self._review_widgets['improvements_edit'] = improvements_edit
+
+        # ---- 人员字段 ----
+        person_grid = QGridLayout()
+        person_grid.setSpacing(6)
+
+        person_grid.addWidget(QLabel("实施人:"), 0, 0)
+        implementer_edit = QLineEdit()
+        implementer_edit.setPlaceholderText("实施人姓名")
+        if self._session and self._session.summary and self._session.summary.actual_implementer:
+            implementer_edit.setText(self._session.summary.actual_implementer)
+        implementer_edit.textChanged.connect(self._save_summary)
+        person_grid.addWidget(implementer_edit, 0, 1)
+        self._review_widgets['implementer_edit'] = implementer_edit
+
+        person_grid.addWidget(QLabel("测试人:"), 1, 0)
+        tester_edit = QLineEdit()
+        tester_edit.setPlaceholderText("测试人姓名")
+        if self._session and self._session.summary and self._session.summary.actual_tester:
+            tester_edit.setText(self._session.summary.actual_tester)
+        tester_edit.textChanged.connect(self._save_summary)
+        person_grid.addWidget(tester_edit, 1, 1)
+        self._review_widgets['tester_edit'] = tester_edit
+
+        person_grid.addWidget(QLabel("审核人:"), 2, 0)
+        reviewer_edit = QLineEdit()
+        reviewer_edit.setPlaceholderText("审核人姓名")
+        if self._session and self._session.summary and self._session.summary.actual_reviewer:
+            reviewer_edit.setText(self._session.summary.actual_reviewer)
+        reviewer_edit.textChanged.connect(self._save_summary)
+        person_grid.addWidget(reviewer_edit, 2, 1)
+        self._review_widgets['reviewer_edit'] = reviewer_edit
+
+        layout.addLayout(person_grid)
+
+        return group
+
+    def _build_stats_text(self) -> str:
+        """构建统计信息文本。
+
+        从 _plan 和 _session 中读取产品名称、变更时间、实际耗时、截图数量。
+        """
+        if not self._session or not self._plan:
+            return "无会话数据"
+
+        lines = []
+        lines.append(f"产品名称: {self._plan.basic_info.product_name}")
+        lines.append(f"变更时间: {self._plan.time_personnel.change_time}")
+
+        # 计算实际耗时
+        if self._session.start_time:
+            try:
+                start = datetime.fromisoformat(self._session.start_time)
+                if self._session.end_time:
+                    end = datetime.fromisoformat(self._session.end_time)
+                    duration_min = int((end - start).total_seconds() / 60)
+                    lines.append(f"实际耗时: {duration_min} 分钟")
+                else:
+                    lines.append("实际耗时: 进行中")
+            except (ValueError, TypeError):
+                pass
+
+        screenshot_count = self._session.get_screenshot_count()
+        lines.append(f"截图数量: {screenshot_count}")
+
+        return "\n".join(lines)
+
+    def _build_step_review_section(self) -> QGroupBox:
+        """构建步骤审核区域。
+
+        每个步骤显示标题行和截图缩略图行。
+        缩略图点击可切换保留/取消保留状态。
+        """
+        group = QGroupBox("步骤审核")
+        layout = QVBoxLayout(group)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(250)
+
+        content = QWidget()
+        self._review_widgets['step_scroll_layout'] = QVBoxLayout(content)
+
+        self._populate_step_frames()
+
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        return group
+
+    def _populate_step_frames(self):
+        """填充步骤框架到步骤滚动布局。
+
+        每个步骤生成一个 QFrame，包含：
+        - 状态 emoji + 步骤标题
+        - 截图缩略图行（120x80，点击切换保留/取消保留）
+        - 无截图时显示橙色警告提示
+        """
+        step_layout = self._review_widgets.get('step_scroll_layout')
+        if not step_layout:
+            return
+
+        # 清除现有子 widget
+        while step_layout.count():
+            item = step_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._session:
+            step_layout.addWidget(QLabel("无会话数据"))
+            return
+
+        all_steps = self._session.get_all_steps()
+        for step in all_steps:
+            frame = QFrame()
+            frame.setFrameStyle(QFrame.StyledPanel)
+            frame.setStyleSheet("QFrame { margin: 2px 0; }")
+            step_vlayout = QVBoxLayout(frame)
+            step_vlayout.setContentsMargins(8, 6, 8, 6)
+
+            # 步骤标题行
+            status_emoji = {
+                'completed': '✅', 'active': '▶️',
+                'pending': '⏳', 'skipped': '⏭️',
+            }.get(step.status, '⏳')
+            header = QLabel(f"{status_emoji} 步骤 {step.seq}: {step.description}")
+            header.setWordWrap(True)
+            header.setStyleSheet("font-weight: bold; font-size: 12px; padding: 2px 0;")
+            step_vlayout.addWidget(header)
+
+            # 截图缩略图行
+            ss_row = QHBoxLayout()
+            ss_row.setSpacing(6)
+
+            kept_screenshots = [ss for ss in step.screenshots if ss.status in ('active', 'kept')]
+
+            if not kept_screenshots:
+                warning_label = QLabel("⚠️ 该步骤未截图")
+                warning_label.setStyleSheet("color: #e67e22; font-size: 11px; padding: 4px;")
+                ss_row.addWidget(warning_label)
+            else:
+                for ss in kept_screenshots:
+                    thumb = self._create_screenshot_thumb(ss)
+                    ss_row.addWidget(thumb)
+
+            ss_row.addStretch()
+            step_vlayout.addLayout(ss_row)
+
+            step_layout.addWidget(frame)
+
+        step_layout.addStretch()
+
+    def _create_screenshot_thumb(self, screenshot: ScreenshotMeta) -> QFrame:
+        """创建可点击的截图缩略图（140x100）。
+
+        kept 状态: 绿色边框 + 浅绿背景 + "✓ 已保留"标签
+        active 状态: 浅灰色边框 + 白色背景
+        点击触发 _toggle_screenshot_kept 切换状态。
+        """
+        frame = QFrame()
+        is_kept = screenshot.status == 'kept'
+        frame.setFixedSize(140, 100)
+        frame.setCursor(Qt.PointingHandCursor)
+
+        if is_kept:
+            frame.setStyleSheet("""
+                QFrame {
+                    border: 2px solid #22c55e;
+                    border-radius: 4px;
+                    background: #f0fdf4;
+                }
+                QFrame:hover { border-color: #16a34a; }
+            """)
+        else:
+            frame.setStyleSheet("""
+                QFrame {
+                    border: 1px solid #d1d5db;
+                    border-radius: 4px;
+                    background: white;
+                }
+                QFrame:hover { border-color: #9ca3af; }
+            """)
+
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(1)
+
+        # 缩略图
+        img_label = QLabel()
+        img_label.setFixedHeight(75)
+        img_label.setAlignment(Qt.AlignCenter)
+        if os.path.exists(screenshot.filepath):
+            pixmap = QPixmap(screenshot.filepath)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(130, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                img_label.setPixmap(scaled)
+        layout.addWidget(img_label)
+
+        # 底部栏: 时间戳 + 保留状态
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+
+        # 时间戳
+        ts = screenshot.timestamp or ''
+        try:
+            dt = datetime.fromisoformat(ts)
+            ts_str = dt.strftime('%H:%M:%S')
+        except (ValueError, TypeError):
+            ts_str = ''
+        ts_label = QLabel(ts_str)
+        ts_label.setStyleSheet("font-size: 9px; color: #666;")
+        bottom_row.addWidget(ts_label)
+
+        bottom_row.addStretch()
+
+        if is_kept:
+            check_label = QLabel("✓ 已保留")
+            check_label.setStyleSheet("color: #22c55e; font-weight: bold; font-size: 10px;")
+            bottom_row.addWidget(check_label)
+
+        layout.addLayout(bottom_row)
+
+        # 点击事件切换保留状态
+        frame.mousePressEvent = lambda e, sid=screenshot.screenshot_id: self._toggle_screenshot_kept(sid)
+
+        return frame
+
+    def _toggle_screenshot_kept(self, screenshot_id: str):
+        """切换截图的保留/取消保留状态并刷新显示。
+
+        查找截图当前状态，调用 SessionManager.set_screenshot_kept，
+        然后重建步骤缩略图列表。
+        """
+        if not self._session:
+            return
+
+        # 查找当前状态
+        current_kept = False
+        for step in self._session.get_all_steps():
+            for ss in step.screenshots:
+                if ss.screenshot_id == screenshot_id:
+                    current_kept = ss.status == 'kept'
+                    break
+            if current_kept:
+                break
+
+        # 切换
+        self.session_manager.set_screenshot_kept(screenshot_id, not current_kept)
+
+        # 刷新缩略图显示
+        self._populate_step_frames()
+
+    # ---- 会话总结自动保存（Task 3） ----
+
+    def _save_summary(self):
+        """从审核面板组件收集总结数据并保存到 SessionManager。
+
+        收集概况总结、总结改进、实施人/测试人/审核人字段，
+        构造 SessionSummary 对象后调用 session_manager.update_summary()。
+        通过 textChanged 信号连接实现实时自动保存。
+        """
+        if not self._review_mode or not self._session:
+            return
+
+        overview = self._review_widgets.get('overview_edit', QTextEdit()).toPlainText().strip()
+        improvements = self._review_widgets.get('improvements_edit', QTextEdit()).toPlainText().strip()
+        implementer = self._review_widgets.get('implementer_edit', QLineEdit()).text().strip()
+        tester = self._review_widgets.get('tester_edit', QLineEdit()).text().strip()
+        reviewer = self._review_widgets.get('reviewer_edit', QLineEdit()).text().strip()
+
+        summary = SessionSummary(
+            overview=overview if overview else None,
+            improvements=improvements if improvements else None,
+            actual_implementer=implementer if implementer else None,
+            actual_tester=tester if tester else None,
+            actual_reviewer=reviewer if reviewer else None,
+        )
+        self.session_manager.update_summary(summary)
 
     # ---- 生命周期 ----
 

@@ -445,18 +445,6 @@ class SessionManager:
                     self._mark_dirty()
                     return
 
-    def pause_recording(self):
-        """标记录屏暂停。"""
-        if self._session:
-            self._session.recording['status'] = 'paused'
-            self._mark_dirty()
-
-    def resume_recording(self):
-        """标记录屏恢复。"""
-        if self._session:
-            self._session.recording['status'] = 'recording'
-            self._mark_dirty()
-
     # ---- 内部 ----
 
     def _mark_dirty(self):
