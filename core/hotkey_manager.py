@@ -35,6 +35,8 @@ class HotkeyManager:
         self._pynput_available = False
         self._active_modifiers = set()
         self._hotkey_combos: dict[str, Callable] = {}  # normalized_combo -> callback
+        self._win32_hotkey_ids: list[int] = []
+        self._win32_hwnd: Optional[int] = None
         self._check_pynput()
 
     def _check_pynput(self):
@@ -63,7 +65,7 @@ class HotkeyManager:
 
         # 构建标准化组合键映射
         for action, (key_combo, callback) in hotkey_map.items():
-            self._actions[action] = callback
+            self._actions[action] = (key_combo, callback)
             normalized = self._normalize_combo(key_combo)
             self._hotkey_combos[normalized] = callback
             logger.info(f"注册: {action} -> {key_combo} -> {normalized}")
@@ -148,9 +150,9 @@ class HotkeyManager:
     def _start_win32_hotkeys(self):
         """Windows-only: Register system-level hotkeys via Win32 RegisterHotKey.
 
-        This provides a more robust alternative to pynput on Windows.
-        Currently structured as a future enhancement note — pynput Listener
-        is the primary mechanism on Windows.
+        RegisterHotKey is the most reliable global hotkey mechanism on Windows.
+        It registers hotkeys at the OS level and the system sends WM_HOTKEY
+        messages to the specified window regardless of which app is active.
         """
         if sys.platform != 'win32':
             return
@@ -159,30 +161,93 @@ class HotkeyManager:
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
 
-        # MOD_CONTROL = 0x0002, MOD_SHIFT = 0x0004, MOD_NOREPEAT = 0x4000
         MOD_CONTROL = 0x0002
         MOD_SHIFT = 0x0004
         MOD_NOREPEAT = 0x4000
+        MOD_ALT = 0x0001
 
-        # Virtual key codes for number keys
         VK_MAP = {
-            '8': 0x38,  # '8' key
-            '9': 0x39,  # '9' key
-            '7': 0x37,  # '7' key
-            '0': 0x30,  # '0' key
-            'S': 0x53,  # 'S' key
+            '8': 0x38,
+            '9': 0x39,
+            '7': 0x37,
+            '0': 0x30,
         }
 
-        # Map actions to our callbacks
-        for action, (combo, callback) in self._actions.items():
-            # Note: RegisterHotKey requires a message loop to receive WM_HOTKEY.
-            # PySide6's QApplication already provides a message loop, but we need
-            # to hook into it. For simplicity, pynput Listener is the primary
-            # mechanism on Windows; RegisterHotKey is noted as a future enhancement.
-            pass
+        registered_count = 0
 
-        logger.info("Windows hotkeys: using pynput Listener (RegisterHotKey enhancement pending)")
+        for action, (combo, callback) in self._actions.items():
+            # Determine modifiers and virtual key
+            parts = [p.strip().lower() for p in combo.split('+')]
+            modifiers = 0
+            vk = 0
+
+            for p in parts:
+                if p in ('ctrl', 'control'):
+                    modifiers |= MOD_CONTROL
+                elif p == 'shift':
+                    modifiers |= MOD_SHIFT
+                elif p in ('alt',):
+                    modifiers |= MOD_ALT
+                else:
+                    # Single character key
+                    if len(p) == 1:
+                        vk = ord(p.upper())  # Virtual key code for letters/numbers
+                    elif p in VK_MAP:
+                        vk = VK_MAP[p]
+
+            if vk == 0:
+                logger.warning(f"Win32: Could not determine VK for '{combo}'")
+                continue
+
+            # Generate a unique hotkey ID
+            # Each action gets a unique ID (1-5)
+            action_ids = {
+                'screenshot_and_advance': 1,
+                'screenshot_only': 2,
+                'prev_step': 3,
+                'toggle_recording': 4,
+                'stop_session': 5,
+            }
+            hotkey_id = action_ids.get(action, registered_count + 1)
+
+            modifiers |= MOD_NOREPEAT  # Prevent key repeat
+
+            # Get the main window's HWND
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if not app:
+                logger.warning("Win32: QApplication not available for RegisterHotKey")
+                continue
+
+            # Find the main window
+            hwnd = None
+            for widget in app.topLevelWidgets():
+                if hasattr(widget, 'winId') and widget.isWindow():
+                    hwnd = int(widget.winId())
+                    break
+
+            if not hwnd:
+                logger.warning("Win32: No window HWND available for RegisterHotKey")
+                continue
+
+            result = user32.RegisterHotKey(hwnd, hotkey_id, modifiers, vk)
+            if result:
+                logger.info(f"Win32 RegisterHotKey: {combo} (id={hotkey_id}) OK")
+                registered_count += 1
+            else:
+                err = kernel32.GetLastError()
+                logger.warning(f"Win32 RegisterHotKey failed: {combo} (err={err})")
+
+        if registered_count > 0:
+            logger.info(f"Win32 hotkeys registered: {registered_count}/{len(self._actions)}")
+        else:
+            logger.warning("Win32: No hotkeys registered, falling back to pynput only")
+
+        # Store for cleanup
+        self._win32_hotkey_ids = list(range(1, 6))
+        self._win32_hwnd = hwnd if registered_count > 0 else None
 
     def _key_to_char(self, key) -> Optional[str]:
         """将 pynput Key 转为字符串。"""
@@ -226,6 +291,15 @@ class HotkeyManager:
             except Exception:
                 pass
             self._listener = None
+
+        # Unregister Win32 hotkeys
+        if sys.platform == 'win32' and self._win32_hwnd:
+            import ctypes
+            user32 = ctypes.windll.user32
+            for hotkey_id in self._win32_hotkey_ids:
+                user32.UnregisterHotKey(self._win32_hwnd, hotkey_id)
+            logger.info("Win32 hotkeys unregistered")
+
         logger.info("所有快捷键已注销")
 
     def check_hotkey_conflict(self, key_combo: str) -> Optional[str]:

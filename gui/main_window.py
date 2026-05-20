@@ -1,6 +1,7 @@
 """ChangeSnap 主窗口 — PySide6 原生 GUI (Windows 适配版)。"""
 
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,23 @@ from utils.log_utils import get_logger
 from utils.file_utils import safe_filename, get_plan_output_dir
 from gui.tray import SystemTray, create_app_icon
 from gui.floating_toolbar import MiniFloatingWindow
+
+# Windows native event handling for WM_HOTKEY
+if sys.platform == 'win32':
+    import ctypes
+    from ctypes import wintypes
+
+    class _WinMsg(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("message", wintypes.UINT),
+            ("wParam", wintypes.WPARAM),
+            ("lParam", wintypes.LPARAM),
+        ]
+
+    WM_HOTKEY = 0x0312
+else:
+    WM_HOTKEY = None
 
 logger = get_logger(__name__)
 
@@ -1318,6 +1336,31 @@ class MainWindow(QMainWindow):
             actual_reviewer=reviewer if reviewer else None,
         )
         self.session_manager.update_summary(summary)
+
+    # ---- Windows native event handling ----
+
+    def nativeEvent(self, eventType, message):
+        """Handle Windows native events (WM_HOTKEY)."""
+        if sys.platform != 'win32':
+            return False, None
+
+        if eventType == b'windows_generic_MSG':
+            msg = _WinMsg.from_address(int(message))
+            if msg.message == WM_HOTKEY:
+                hotkey_id = msg.wParam
+                if hotkey_id == 1:
+                    self._toolbar_capture()
+                elif hotkey_id == 2:
+                    self._toolbar_capture_only()
+                elif hotkey_id == 3:
+                    self._toolbar_prev()
+                elif hotkey_id == 4:
+                    self._toolbar_toggle_pause()
+                elif hotkey_id == 5:
+                    self._toolbar_stop()
+                return True, None
+
+        return False, None
 
     # ---- 生命周期 ----
 

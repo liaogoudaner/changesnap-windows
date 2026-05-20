@@ -149,6 +149,7 @@ class RecordingEngine:
                 self._paused = False
                 self._stop_segment_timer()
                 self._stop_ffmpeg(sigint_first=True)
+                time.sleep(0.3)
 
                 if self._monitor_thread and self._monitor_thread.is_alive():
                     self._monitor_thread.join(timeout=3)
@@ -400,13 +401,19 @@ class RecordingEngine:
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
             )
-            logger.info(
-                f"ffmpeg 进程已启动 (PID={self._ffmpeg_process.pid}, "
-                f"output={output_path})"
-            )
+            # Give ffmpeg a moment to start up and detect any immediate errors
+            time.sleep(0.5)
+            retcode = self._ffmpeg_process.poll()
+            if retcode is not None:
+                # ffmpeg exited immediately — read error output
+                stderr_output = self._ffmpeg_process.stderr.read().decode('utf-8', errors='replace')[:2000]
+                logger.error(f"ffmpeg 进程启动后立即退出 (返回码={retcode}): {stderr_output}")
+                self._ffmpeg_process = None
+                return False
+            logger.info(f"ffmpeg 进程已启动 (PID={self._ffmpeg_process.pid}, output={output_path})")
             return True
         except Exception as e:
             logger.error(f"启动 ffmpeg 失败: {e}")
@@ -541,6 +548,12 @@ class RecordingEngine:
         except Exception as e:
             logger.warning(f"停止 ffmpeg 进程异常: {e}")
         finally:
+            # Close stderr pipe to avoid resource leak
+            if self._ffmpeg_process and self._ffmpeg_process.stderr:
+                try:
+                    self._ffmpeg_process.stderr.close()
+                except Exception:
+                    pass
             self._ffmpeg_process = None
 
     # ---- 进程监控 ----
