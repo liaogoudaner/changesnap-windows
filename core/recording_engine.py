@@ -370,7 +370,7 @@ class RecordingEngine:
         """构建录屏分段输出路径。
 
         路径格式（与 macOS 版本保持一致）:
-            outputs/<planName>/recording_XXX.mp4
+            outputs/<planName>/[变更录像]<planName>.mp4
 
         Args:
             segment_id: 分段编号（1-based）
@@ -378,7 +378,8 @@ class RecordingEngine:
         output_dir = ensure_dir(
             get_work_dir() / 'outputs' / safe_filename(self._plan_name)
         )
-        return str(output_dir / f"recording_{segment_id:03d}.mp4")
+        safe_name = safe_filename(self._plan_name)
+        return str(output_dir / f"[变更录像]{safe_name}.mp4")
 
     # ---- ffmpeg 进程管理 ----
 
@@ -418,13 +419,11 @@ class RecordingEngine:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-            # On Windows, use PIPE for stdin so we can send 'q' for graceful exit.
+            # On Windows, use DEVNULL for stdin (frag_keyframe handles graceful exit).
             # On macOS/Linux, SIGINT handles graceful exit via signal.
-            _stdin = subprocess.PIPE if sys.platform == 'win32' else subprocess.DEVNULL
-
             self._ffmpeg_process = subprocess.Popen(
                 cmd,
-                stdin=_stdin,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
@@ -488,12 +487,15 @@ class RecordingEngine:
 
         当设置了 region 时，会添加 crop 滤镜裁剪录制区域。
         """
-        # NOTE: NO -nostdin — we write 'q' to stdin for graceful exit on Windows
+        # -nostdin prevents ffmpeg from reading stdin (avoids crash on Windows).
+        # -movflags +frag_keyframe writes fragmented MP4 — playable even if
+        # the process is killed before writing the final moov atom.
         cmd = [
             ffmpeg_path,
             "-y",
             "-loglevel",
             "error",
+            "-nostdin",
             "-f",
             "gdigrab",
             "-framerate",
@@ -508,6 +510,8 @@ class RecordingEngine:
             "yuv420p",
             "-crf",
             "28",
+            "-movflags",
+            "+frag_keyframe",
             "-an",
         ]
 
@@ -545,23 +549,14 @@ class RecordingEngine:
         try:
             pid = proc.pid
 
-            # Stage 1: Graceful exit — write 'q' to stdin (Windows) or SIGINT (Unix).
-            # This lets ffmpeg write the moov atom so the MP4 is playable.
-            if sigint_first:
-                if sys.platform == 'win32':
-                    # Windows: send 'q' via stdin for graceful quit
-                    try:
-                        proc.stdin.write(b'q\n')
-                        proc.stdin.flush()
-                        proc.wait(timeout=5)
-                    except (subprocess.TimeoutExpired, ProcessLookupError, OSError, AttributeError, BrokenPipeError):
-                        pass
-                else:
-                    try:
-                        proc.send_signal(signal.SIGINT)
-                        proc.wait(timeout=3)
-                    except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                        pass
+            # Stage 1: Graceful exit via SIGINT (Unix) — frag_keyframe on
+            # Windows makes the file playable even without graceful exit.
+            if sigint_first and sys.platform != "win32":
+                try:
+                    proc.send_signal(signal.SIGINT)
+                    proc.wait(timeout=3)
+                except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                    pass
 
             # Stage 2: SIGTERM / terminate
             if proc.poll() is None:

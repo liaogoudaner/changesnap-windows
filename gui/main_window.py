@@ -594,13 +594,21 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "生成失败", result.get('error', '未知错误'))
 
         # Rename recording video if save_recording is checked
+        # macOS convention: [变更录像]planName.mp4 → planName变更录像.mp4
         if self._chk_save_recording and self._chk_save_recording.isChecked():
             mp4_files = list(output_dir.glob("*.mp4")) if output_dir.exists() else []
             if mp4_files:
-                new_name = output_dir / f"{plan_name}变更录像.mp4"
+                src = mp4_files[0]
+                dst = output_dir / f"{plan_name}变更录像.mp4"
+                # Remove stale target from a previous session (if any)
+                if dst.exists():
+                    try:
+                        dst.unlink()
+                    except Exception:
+                        pass
                 try:
-                    mp4_files[0].rename(new_name)
-                    logger.info(f"录像已重命名: {new_name.name}")
+                    src.rename(dst)
+                    logger.info(f"录像已重命名: {src.name} → {dst.name}")
                 except Exception as e:
                     logger.warning(f"重命名录像失败: {e}")
 
