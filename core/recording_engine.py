@@ -485,51 +485,45 @@ class RecordingEngine:
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
         """构建 Windows gdigrab 录屏命令。
 
-        当设置了 region 时，会添加 crop 滤镜裁剪录制区域。
+        使用 gdigrab 原生 -offset_x/-offset_y/-video_size 进行区域裁剪，
+        避免 -vf crop 滤镜导致的 ffmpeg 崩溃。
         """
-        # -nostdin prevents ffmpeg from reading stdin (avoids crash on Windows).
-        # -movflags +frag_keyframe writes fragmented MP4 — playable even if
-        # the process is killed before writing the final moov atom.
-        cmd = [
-            ffmpeg_path,
-            "-y",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-f",
-            "gdigrab",
-            "-framerate",
-            str(self._fps),
-            "-i",
-            "desktop",
-            "-vcodec",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "28",
-            "-movflags",
-            "+frag_keyframe",
-            "-an",
-        ]
+        # -nostdin prevents ffmpeg from reading stdin (avoids crash).
+        # -movflags +frag_keyframe writes fragmented MP4 — playable even
+        # if the process is killed before writing the final moov atom.
+        cmd = [ffmpeg_path, "-y", "-loglevel", "error", "-nostdin"]
 
-        # 如果设置了录制区域，添加 crop 滤镜
-        # crop 格式: crop=width:height:x:y  (x,y 为左上角坐标)
+        # gdigrab native region options (BEFORE -i desktop, avoids crop filter crash)
         region = self._region
         if region:
-            crop_w = region.get('width', 0)
-            crop_h = region.get('height', 0)
-            crop_x = region.get('left', 0)
-            crop_y = region.get('top', 0)
-            if crop_w > 0 and crop_h > 0:
-                cmd.extend(["-vf", f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"])
-                logger.info(
-                    f"应用裁剪区域: crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
-                )
+            rw = region.get('width', 0)
+            rh = region.get('height', 0)
+            rx = region.get('left', 0)
+            ry = region.get('top', 0)
+            if rw > 0 and rh > 0:
+                cmd.extend([
+                    "-offset_x", str(rx),
+                    "-offset_y", str(ry),
+                    "-video_size", f"{rw}x{rh}",
+                ])
+                logger.info(f"gdigrab 录制区域: {rw}x{rh}+{rx}+{ry}")
+            else:
+                logger.info("gdigrab 全屏录制")
+        else:
+            logger.info("gdigrab 全屏录制")
 
-        cmd.append(output_path)
+        cmd.extend([
+            "-f", "gdigrab",
+            "-framerate", str(self._fps),
+            "-i", "desktop",
+            "-vcodec", "libx264",
+            "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-crf", "28",
+            "-movflags", "+frag_keyframe",
+            "-an",
+            output_path,
+        ])
         return cmd
 
     def _stop_ffmpeg(self, sigint_first: bool = True):
@@ -620,8 +614,18 @@ class RecordingEngine:
                     if not self._running:
                         break
                     if not self._paused:
+                        # Read stderr for the actual error before we lose it
+                        err_msg = ""
+                        try:
+                            if proc.stderr:
+                                remaining = proc.stderr.read()
+                                if remaining:
+                                    err_msg = remaining.decode('utf-8', errors='replace')[:500]
+                        except Exception:
+                            pass
                         logger.error(
                             f"ffmpeg 进程意外退出 (PID={proc.pid}, 返回码={retcode})"
+                            + (f"\nffmpeg stderr: {err_msg}" if err_msg else "")
                         )
                         self._running = False
                         self._ffmpeg_process = None
