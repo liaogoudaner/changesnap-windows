@@ -71,4 +71,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChangeSnap-Windows
-          path: dist/ChangeSnap.exe
+          path: dist/变更报告助手.exe
