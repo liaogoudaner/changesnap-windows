@@ -515,6 +515,7 @@ class RecordingEngine:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-crf", "28",
+            "-g", "5",
             "-movflags", "+frag_keyframe",
             "-an",
             output_path,
