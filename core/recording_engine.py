@@ -240,42 +240,44 @@ class RecordingEngine:
         """在多个位置搜索 ffmpeg 可执行文件。
 
         搜索顺序:
-        1. imageio-ffmpeg 捆绑的二进制
-        2. 系统 PATH
-        3. 常见安装路径（含 Windows 特有路径）
+        1. PyInstaller _MEIPASS 下的静态 ffmpeg.exe（优先）
+        2. imageio-ffmpeg 捆绑的二进制（备选）
+        3. 系统 PATH
+        4. 常见安装路径
         """
-        # 1. imageio-ffmpeg 捆绑的二进制
+        # 1. Static ffmpeg.exe bundled by CI (gyan.dev build) — highest priority
+        if getattr(sys, 'frozen', False):
+            meipass = sys._MEIPASS
+            # Direct ffmpeg.exe at root (from --add-binary ffmpeg.exe;.)
+            direct = os.path.join(meipass, 'ffmpeg.exe')
+            if os.path.isfile(direct):
+                logger.info(f"ffmpeg 找到 (static): {direct}")
+                return direct
+            # Also search subdirectories
+            for _d in [os.path.join(meipass, 'imageio_ffmpeg', 'binaries'),
+                       os.path.join(meipass, 'binaries')]:
+                if not os.path.isdir(_d):
+                    continue
+                try:
+                    for _fn in os.listdir(_d):
+                        if _fn.startswith('ffmpeg-') and _fn.endswith('.exe'):
+                            _fp = os.path.join(_d, _fn)
+                            if os.path.isfile(_fp):
+                                logger.info(f"ffmpeg 找到 (imageio): {_fp}")
+                                return _fp
+                except Exception:
+                    continue
+
+        # 2. imageio-ffmpeg bundled binary (development / non-frozen)
         try:
             from imageio_ffmpeg import get_ffmpeg_exe
-
             path = get_ffmpeg_exe()
             if path and os.path.isfile(path):
                 return path
         except Exception:
             pass
 
-        # 1.5 PyInstaller _MEIPASS — 搜索 imageio_ffmpeg 的捆绑二进制
-        if getattr(sys, 'frozen', False):
-            meipass = sys._MEIPASS
-            _search_dirs = [
-                os.path.join(meipass, 'imageio_ffmpeg', 'binaries'),
-                os.path.join(meipass, 'binaries'),
-                meipass,
-            ]
-            for _d in _search_dirs:
-                if not os.path.isdir(_d):
-                    continue
-                try:
-                    for _fn in os.listdir(_d):
-                        if (_fn.startswith('ffmpeg-') or _fn == 'ffmpeg.exe') and _fn.endswith('.exe'):
-                            _fp = os.path.join(_d, _fn)
-                            if os.path.isfile(_fp):
-                                logger.info(f"ffmpeg 在 _MEIPASS 中找到: {_fp}")
-                                return _fp
-                except Exception:
-                    continue
-
-        # 2. 系统 PATH
+        # 3. 系统 PATH
         path = shutil.which("ffmpeg")
         if path:
             return path
