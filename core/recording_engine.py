@@ -501,13 +501,19 @@ class RecordingEngine:
             rx = region.get('left', 0)
             ry = region.get('top', 0)
             if rw > 0 and rh > 0:
-                cmd.extend([
-                    "-offset_x", str(rx),
-                    "-offset_y", str(ry),
-                    "-video_size", f"{rw}x{rh}",
-                ])
-                logger.info(f"gdigrab 录制区域: {rw}x{rh}+{rx}+{ry}")
-            else:
+                # libx264 requires even dimensions — round down to nearest even
+                rw = rw & ~1  # clear lowest bit
+                rh = rh & ~1
+                if rw < 2 or rh < 2:
+                    logger.warning(f"裁剪后区域太小: {rw}x{rh}，跳过区域限制")
+                else:
+                    cmd.extend([
+                        "-offset_x", str(rx),
+                        "-offset_y", str(ry),
+                        "-video_size", f"{rw}x{rh}",
+                    ])
+                    logger.info(f"gdigrab 录制区域: {rw}x{rh}+{rx}+{ry}")
+            if not any(a.startswith('-offset') for a in cmd):
                 logger.info("gdigrab 全屏录制")
         else:
             logger.info("gdigrab 全屏录制")
