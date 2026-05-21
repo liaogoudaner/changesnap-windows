@@ -261,18 +261,16 @@ class ReportGenerator:
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
 
     def _build_step_table(self, steps: list[SessionStep]):
-        """构建步骤表格并嵌入截图。
+        """构建步骤表格，截图嵌入表格单元格内。
 
-        PRD prd-data-model.md 4.2 节：
-        表格包含：序号、计划时间、操作步骤、实施人、审核人
-        截图在表格行下方作为独立段落插入。
+        表格列：序号、计划时间、操作步骤、实施人、审核人、截图
+        截图直接放在对应步骤行的表格单元格中，无时间戳。
         """
         if not steps:
             return
 
-        # 创建表格
-        headers = ['序号', '计划时间', '操作步骤', '实施人', '审核人']
-        table = self._doc.add_table(rows=1, cols=5)
+        headers = ['序号', '计划时间', '操作步骤', '实施人', '审核人', '截图']
+        table = self._doc.add_table(rows=1, cols=6)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table.style = 'Table Grid'
 
@@ -288,10 +286,9 @@ class ReportGenerator:
             run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-        # 数据行
         for step in steps:
             if step.status == 'skipped':
-                continue  # 跳过的不显示
+                continue
 
             row_cells = table.add_row().cells
 
@@ -302,7 +299,7 @@ class ReportGenerator:
             run.font.size = self.SIZE_TABLE
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            # 计划时间（或实际时间）
+            # 计划时间
             time_text = step.actual_time or step.planned_time
             row_cells[1].text = ''
             p = row_cells[1].paragraphs[0]
@@ -310,11 +307,10 @@ class ReportGenerator:
             run.font.size = self.SIZE_TABLE
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            # 操作步骤描述
+            # 操作步骤
             row_cells[2].text = ''
             p = row_cells[2].paragraphs[0]
-            desc = step.description
-            run = p.add_run(desc)
+            run = p.add_run(step.description)
             run.font.size = self.SIZE_TABLE
             run.font.name = self.FONT_BODY
             run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
@@ -333,94 +329,47 @@ class ReportGenerator:
             run.font.size = self.SIZE_TABLE
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            # ---- 截图行（表格下方） ----
+            # ---- 截图 (嵌入表格单元格内) ----
             kept_screenshots = [ss for ss in step.screenshots if ss.status in ('kept', 'active')]
 
             if kept_screenshots:
-                # 截图并排显示（每行最多 2 张）
-                for i in range(0, len(kept_screenshots), 2):
-                    row_screenshots = kept_screenshots[i:i+2]
-                    self._add_screenshot_row(row_screenshots)
-
-                # 补充说明
-                if step.supplement:
-                    p = self._doc.add_paragraph()
-                    run = p.add_run(f'补充说明：{step.supplement}')
-                    run.italic = True
-                    run.font.size = self.SIZE_CAPTION
-                    run.font.name = self.FONT_BODY
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
-                    run.font.color.rgb = RGBColor(100, 100, 100)
+                cell = row_cells[5]
+                for ss in kept_screenshots:
+                    filepath = ss.filepath
+                    if not filepath or not os.path.exists(filepath):
+                        p = cell.add_paragraph()
+                        run = p.add_run('[截图缺失]')
+                        run.font.size = self.SIZE_CAPTION
+                        run.font.color.rgb = RGBColor(255, 0, 0)
+                        continue
+                    try:
+                        p = cell.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = p.add_run()
+                        run.add_picture(str(filepath), width=Cm(5.0))
+                    except Exception as e:
+                        logger.warning(f"截图嵌入失败: {filepath}: {e}")
+                        p = cell.add_paragraph()
+                        run = p.add_run('[加载失败]')
+                        run.font.size = self.SIZE_CAPTION
+                        run.font.color.rgb = RGBColor(255, 0, 0)
             else:
-                # 无截图提示
-                p = self._doc.add_paragraph()
-                run = p.add_run('（该步骤未截图）')
+                row_cells[5].text = ''
+                p = row_cells[5].paragraphs[0]
+                run = p.add_run('—')
                 run.font.size = self.SIZE_CAPTION
                 run.font.color.rgb = RGBColor(180, 180, 180)
-
-                if step.supplement:
-                    p = self._doc.add_paragraph()
-                    run = p.add_run(f'补充说明：{step.supplement}')
-                    run.italic = True
-                    run.font.size = self.SIZE_CAPTION
-                    run.font.name = self.FONT_BODY
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
-
-    def _add_screenshot_row(self, screenshots: list):
-        """添加一行并排截图。"""
-        # 使用一个两列无边框表格来并排显示截图
-        num_screenshots = len(screenshots)
-        if num_screenshots == 0:
-            return
-
-        # 每张截图宽度
-        img_width = self.MAX_IMAGE_WIDTH
-        if num_screenshots == 2:
-            img_width = Cm(5.8)  # 两张并排
-
-        for ss in screenshots:
-            filepath = ss.filepath
-            if not filepath or not os.path.exists(filepath):
-                # 截图文件丢失
-                p = self._doc.add_paragraph()
-                run = p.add_run('[截图缺失]')
-                run.font.size = self.SIZE_CAPTION
-                run.font.color.rgb = RGBColor(255, 0, 0)
-                continue
-
-            try:
-                # 添加截图
-                p = self._doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = p.add_run()
-                run.add_picture(str(filepath), width=img_width)
 
-                # 时间戳标注
-                ts = ss.timestamp
-                if ts:
-                    try:
-                        dt = datetime.fromisoformat(ts)
-                        ts_display = dt.strftime('%H:%M:%S')
-                    except (ValueError, TypeError):
-                        ts_display = ts
-                else:
-                    ts_display = ''
-
-                if ts_display:
-                    p = self._doc.add_paragraph()
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = p.add_run(f'截图时间：{ts_display}')
-                    run.font.size = self.SIZE_CAPTION
-                    run.font.color.rgb = RGBColor(128, 128, 128)
-                    run.font.name = self.FONT_BODY
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
-
-            except Exception as e:
-                logger.warning(f"截图嵌入失败: {filepath}: {e}")
-                p = self._doc.add_paragraph()
-                run = p.add_run(f'[截图加载失败: {ss.filename}]')
+            # 补充说明 (放在截图下方同一单元格内)
+            if step.supplement:
+                p = row_cells[5].add_paragraph()
+                run = p.add_run(step.supplement)
+                run.italic = True
                 run.font.size = self.SIZE_CAPTION
-                run.font.color.rgb = RGBColor(255, 0, 0)
+                run.font.name = self.FONT_BODY
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), self.FONT_BODY)
+                run.font.color.rgb = RGBColor(100, 100, 100)
 
     # ---- 辅助方法 ----
 
