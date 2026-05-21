@@ -483,42 +483,12 @@ class RecordingEngine:
         ]
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
-        """构建 Windows gdigrab 录屏命令。
-
-        使用 gdigrab 原生 -offset_x/-offset_y/-video_size 进行区域裁剪，
-        避免 -vf crop 滤镜导致的 ffmpeg 崩溃。
-        """
-        # -nostdin prevents ffmpeg from reading stdin (avoids crash).
-        # -movflags +frag_keyframe writes fragmented MP4 — playable even
-        # if the process is killed before writing the final moov atom.
-        cmd = [ffmpeg_path, "-y", "-loglevel", "error", "-nostdin"]
-
-        # gdigrab native region options (BEFORE -i desktop, avoids crop filter crash)
-        region = self._region
-        if region:
-            rw = region.get('width', 0)
-            rh = region.get('height', 0)
-            rx = region.get('left', 0)
-            ry = region.get('top', 0)
-            if rw > 0 and rh > 0:
-                # libx264 requires even dimensions — round down to nearest even
-                rw = rw & ~1  # clear lowest bit
-                rh = rh & ~1
-                if rw < 2 or rh < 2:
-                    logger.warning(f"裁剪后区域太小: {rw}x{rh}，跳过区域限制")
-                else:
-                    cmd.extend([
-                        "-offset_x", str(rx),
-                        "-offset_y", str(ry),
-                        "-video_size", f"{rw}x{rh}",
-                    ])
-                    logger.info(f"gdigrab 录制区域: {rw}x{rh}+{rx}+{ry}")
-            if not any(a.startswith('-offset') for a in cmd):
-                logger.info("gdigrab 全屏录制")
-        else:
-            logger.info("gdigrab 全屏录制")
-
-        cmd.extend([
+        """构建 Windows gdigrab 录屏命令。"""
+        cmd = [
+            ffmpeg_path,
+            "-y",
+            "-loglevel", "warning",  # show warnings so we can diagnose issues
+            "-nostdin",
             "-f", "gdigrab",
             "-framerate", str(self._fps),
             "-i", "desktop",
@@ -526,10 +496,27 @@ class RecordingEngine:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-crf", "28",
-            "-movflags", "+frag_keyframe",
             "-an",
-            output_path,
-        ])
+        ]
+
+        # Apply crop filter for region recording.
+        # libx264 requires even dimensions — round down to nearest even.
+        region = self._region
+        if region:
+            rw = region.get('width', 0)
+            rh = region.get('height', 0)
+            rx = region.get('left', 0)
+            ry = region.get('top', 0)
+            if rw > 0 and rh > 0:
+                rw = rw & ~1  # force even
+                rh = rh & ~1
+                if rw >= 2 and rh >= 2:
+                    cmd.extend(["-vf", f"crop={rw}:{rh}:{rx}:{ry}"])
+                    logger.info(f"crop filter: {rw}x{rh}+{rx}+{ry}")
+                else:
+                    logger.info("全屏录制（区域太小）")
+
+        cmd.append(output_path)
         return cmd
 
     def _stop_ffmpeg(self, sigint_first: bool = True):
