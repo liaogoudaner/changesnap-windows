@@ -149,7 +149,6 @@ class RecordingEngine:
                 self._paused = False
                 self._stop_segment_timer()
                 self._stop_ffmpeg(sigint_first=True)
-                time.sleep(0.3)
 
                 if self._monitor_thread and self._monitor_thread.is_alive():
                     self._monitor_thread.join(timeout=3)
@@ -446,8 +445,14 @@ class RecordingEngine:
                 stderr=self._stderr_fh,
                 startupinfo=startupinfo,
             )
-            time.sleep(2.0)
-            retcode = self._ffmpeg_process.poll()
+            # Poll without blocking: check every 100ms for up to 2 seconds
+            for _ in range(20):
+                time.sleep(0.1)
+                retcode = self._ffmpeg_process.poll()
+                if retcode is not None:
+                    break
+            else:
+                retcode = None  # still running after 2s, success
             if retcode is not None:
                 self._stderr_fh.close()
                 # Read the log file for error info

@@ -768,6 +768,7 @@ class MainWindow(QMainWindow):
         """刷新截图展示区。"""
         for label in self._screenshot_labels:
             label.setParent(None)
+            label.deleteLater()
         self._screenshot_labels.clear()
 
         if not self._session:

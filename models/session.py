@@ -289,11 +289,13 @@ class SessionState:
         )
 
     def get_all_steps(self) -> list[SessionStep]:
-        """获取所有步骤的扁平列表。"""
-        steps = []
-        for group in self.step_groups:
-            steps.extend(group.steps)
-        return steps
+        """获取所有步骤的扁平列表（缓存，步骤结构不变）。"""
+        if not hasattr(self, '_all_steps_cache') or self._all_steps_cache is None:
+            steps = []
+            for group in self.step_groups:
+                steps.extend(group.steps)
+            self._all_steps_cache = steps
+        return self._all_steps_cache
 
     def get_current_step(self) -> Optional[SessionStep]:
         """获取当前 ACTIVE 步骤。"""
