@@ -411,14 +411,7 @@ class RecordingEngine:
         return path
 
     def _start_ffmpeg(self, output_path: str) -> bool:
-        """启动 ffmpeg 子进程进行屏幕录制。
-
-        Args:
-            output_path: 输出文件路径
-
-        Returns:
-            进程是否成功启动
-        """
+        """启动 ffmpeg 子进程进行屏幕录制。"""
         ffmpeg_path = self._get_ffmpeg_path()
         if not ffmpeg_path:
             return False
@@ -432,10 +425,16 @@ class RecordingEngine:
                 logger.warning(f"不支持的平台: {sys.platform}")
                 return False
 
+            # Write stderr to a FILE (not PIPE) so ffmpeg never blocks.
+            # The file is alongside the output video.
+            self._stderr_log = output_path + ".ffmpeg.log"
+
             startupinfo = None
             if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            self._stderr_fh = open(self._stderr_log, 'w')
 
             logger.info(f"ffmpeg 命令: {' '.join(cmd)}")
 
@@ -443,19 +442,23 @@ class RecordingEngine:
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=self._stderr_fh,
                 startupinfo=startupinfo,
             )
-            # Give ffmpeg time to initialize and detect any immediate errors
-            time.sleep(1.5)
+            time.sleep(2.0)
             retcode = self._ffmpeg_process.poll()
             if retcode is not None:
-                # ffmpeg exited immediately — read error output
-                stderr_output = self._ffmpeg_process.stderr.read().decode('utf-8', errors='replace')[:2000]
-                logger.error(f"ffmpeg 进程启动后立即退出 (返回码={retcode}): {stderr_output}")
+                self._stderr_fh.close()
+                # Read the log file for error info
+                try:
+                    with open(self._stderr_log, 'r', errors='replace') as f:
+                        err = f.read()[:2000]
+                except Exception:
+                    err = "(cannot read log)"
+                logger.error(f"ffmpeg 启动后立即退出 (返回码={retcode}): {err}")
                 self._ffmpeg_process = None
                 return False
-            logger.info(f"ffmpeg 进程已启动 (PID={self._ffmpeg_process.pid}, output={output_path})")
+            logger.info(f"ffmpeg 已启动 (PID={self._ffmpeg_process.pid}) size@start={os.path.getsize(output_path)}bytes")
             return True
         except Exception as e:
             logger.error(f"启动 ffmpeg 失败: {e}")
@@ -502,13 +505,9 @@ class RecordingEngine:
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
         """构建 Windows gdigrab 录屏命令。"""
-        # -movflags +frag_keyframe: writes fragmented MP4, playable even if process
-        # is killed before writing the final moov atom.
         cmd = [
             ffmpeg_path,
             "-y",
-            "-loglevel", "fatal",
-            "-nostdin",
             "-f", "gdigrab",
             "-framerate", str(self._fps),
             "-i", "desktop",
@@ -516,28 +515,10 @@ class RecordingEngine:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-crf", "28",
-            "-movflags", "+frag_keyframe",
             "-an",
+            output_path,
         ]
-
-        # Apply crop filter for region recording.
-        # libx264 requires even dimensions — round down to nearest even.
-        region = self._region
-        if region:
-            rw = region.get('width', 0)
-            rh = region.get('height', 0)
-            rx = region.get('left', 0)
-            ry = region.get('top', 0)
-            if rw > 0 and rh > 0:
-                rw = rw & ~1  # force even
-                rh = rh & ~1
-                if rw >= 2 and rh >= 2:
-                    cmd.extend(["-vf", f"crop={rw}:{rh}:{rx}:{ry}"])
-                    logger.info(f"crop filter: {rw}x{rh}+{rx}+{ry}")
-                else:
-                    logger.info("全屏录制（区域太小）")
-
-        cmd.append(output_path)
+        logger.info(f"ffmpeg cmd: {' '.join(cmd)}")
         return cmd
 
     def _stop_ffmpeg(self, sigint_first: bool = True):
@@ -582,18 +563,25 @@ class RecordingEngine:
                 except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
                     pass
 
-            logger.info(f"ffmpeg 进程已停止 (PID={pid})")
+            # Log output file size
+            try:
+                if hasattr(self, '_output_path') and self._output_path:
+                    sz = os.path.getsize(self._output_path) if os.path.exists(self._output_path) else 0
+                    logger.info(f"ffmpeg 已停止 (PID={pid}) output_size={sz}bytes")
+                else:
+                    logger.info(f"ffmpeg 已停止 (PID={pid})")
+            except Exception:
+                logger.info(f"ffmpeg 已停止 (PID={pid})")
         except Exception as e:
             logger.warning(f"停止 ffmpeg 进程异常: {e}")
         finally:
-            # Close pipes to avoid resource leaks
-            if self._ffmpeg_process:
-                for _pipe in (self._ffmpeg_process.stdin, self._ffmpeg_process.stderr):
-                    if _pipe:
-                        try:
-                            _pipe.close()
-                        except Exception:
-                            pass
+            # Close stderr file handle
+            if hasattr(self, '_stderr_fh') and self._stderr_fh:
+                try:
+                    self._stderr_fh.close()
+                except Exception:
+                    pass
+                self._stderr_fh = None
             self._ffmpeg_process = None
 
     # ---- 进程监控 ----
@@ -628,18 +616,18 @@ class RecordingEngine:
                     if not self._running:
                         break
                     if not self._paused:
-                        # Read stderr for the actual error before we lose it
+                        # Read stderr log file for error
                         err_msg = ""
                         try:
-                            if proc.stderr:
-                                remaining = proc.stderr.read()
-                                if remaining:
-                                    err_msg = remaining.decode('utf-8', errors='replace')[:500]
+                            log_path = getattr(self, '_stderr_log', None)
+                            if log_path and os.path.exists(log_path):
+                                with open(log_path, 'r', errors='replace') as f:
+                                    err_msg = f.read()[:2000]
                         except Exception:
                             pass
                         logger.error(
                             f"ffmpeg 进程意外退出 (PID={proc.pid}, 返回码={retcode})"
-                            + (f"\nffmpeg stderr: {err_msg}" if err_msg else "")
+                            + (f"\nstderr: {err_msg}" if err_msg else "")
                         )
                         self._running = False
                         self._ffmpeg_process = None
