@@ -410,15 +410,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先加载变更方案")
             return
 
+        # Hide main window so it doesn't block the region selection area
+        self.hide()
+
         # Windows: use our native PySide6 region selector
         from gui.region_selector import RegionSelector
         region = RegionSelector.get_region()
         if region is None:
-            return  # User cancelled
+            self.show()  # User cancelled — restore main window
+            return
         self._capture_region = region
         self._do_start_session()
 
-        # Update tray
+        # Update tray (main window stays hidden during recording)
         if self._session:
             self._tray.update_state(
                 'running',
@@ -551,7 +555,8 @@ class MainWindow(QMainWindow):
 
         logger.info(f"变更已停止: {self._session.session_id}")
 
-        # 进入审核面板模式
+        # 恢复主窗口，进入审核面板模式
+        self.show()
         self._show_review_panel()
 
     def _generate_report(self):
@@ -590,6 +595,11 @@ class MainWindow(QMainWindow):
                 self, "生成成功",
                 f"总结报告已生成:\n{result['filepath']}\n大小: {result['file_size'] / 1024:.0f}KB"
             )
+            # 自动打开报告所在目录，方便查看报告和录像文件
+            try:
+                os.startfile(str(output_dir)) if sys.platform == 'win32' else __import__('subprocess').run(['open', str(output_dir)])
+            except Exception as e:
+                logger.warning(f"打开目录失败: {e}")
         else:
             QMessageBox.critical(self, "生成失败", result.get('error', '未知错误'))
 
