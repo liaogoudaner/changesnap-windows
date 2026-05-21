@@ -507,7 +507,7 @@ class RecordingEngine:
         cmd = [
             ffmpeg_path,
             "-y",
-            "-loglevel", "warning",
+            "-loglevel", "fatal",
             "-nostdin",
             "-f", "gdigrab",
             "-framerate", str(self._fps),
