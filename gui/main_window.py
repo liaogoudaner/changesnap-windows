@@ -1118,10 +1118,12 @@ class MainWindow(QMainWindow):
         # ---- 概况总结 ----
         layout.addWidget(QLabel("概况总结:"))
         overview_edit = QTextEdit()
-        overview_edit.setPlaceholderText("输入变更概况总结（可选）...")
+        overview_edit.setPlaceholderText("输入变更概况总结...")
         overview_edit.setMaximumHeight(120)
         if self._session and self._session.summary and self._session.summary.overview:
             overview_edit.setText(self._session.summary.overview)
+        else:
+            overview_edit.setText("变更完成")
         overview_edit.textChanged.connect(self._save_summary)
         layout.addWidget(overview_edit)
         self._review_widgets['overview_edit'] = overview_edit
@@ -1129,15 +1131,21 @@ class MainWindow(QMainWindow):
         # ---- 总结改进 ----
         layout.addWidget(QLabel("总结改进:"))
         improvements_edit = QTextEdit()
-        improvements_edit.setPlaceholderText("输入总结和改进建议（可选）...")
+        improvements_edit.setPlaceholderText("输入总结和改进建议...")
         improvements_edit.setMaximumHeight(120)
         if self._session and self._session.summary and self._session.summary.improvements:
             improvements_edit.setText(self._session.summary.improvements)
+        else:
+            improvements_edit.setText("无")
         improvements_edit.textChanged.connect(self._save_summary)
         layout.addWidget(improvements_edit)
         self._review_widgets['improvements_edit'] = improvements_edit
 
-        # ---- 人员字段 ----
+        # ---- 人员字段（默认从方案步骤中提取） ----
+        _default_impl = self._get_default_person('implementer')
+        _default_reviewer = self._get_default_person('reviewer')
+        _default_tester = self._get_default_person('tester')
+
         person_grid = QGridLayout()
         person_grid.setSpacing(6)
 
@@ -1146,6 +1154,8 @@ class MainWindow(QMainWindow):
         implementer_edit.setPlaceholderText("实施人姓名")
         if self._session and self._session.summary and self._session.summary.actual_implementer:
             implementer_edit.setText(self._session.summary.actual_implementer)
+        elif _default_impl:
+            implementer_edit.setText(_default_impl)
         implementer_edit.textChanged.connect(self._save_summary)
         person_grid.addWidget(implementer_edit, 0, 1)
         self._review_widgets['implementer_edit'] = implementer_edit
@@ -1155,6 +1165,8 @@ class MainWindow(QMainWindow):
         tester_edit.setPlaceholderText("测试人姓名")
         if self._session and self._session.summary and self._session.summary.actual_tester:
             tester_edit.setText(self._session.summary.actual_tester)
+        elif _default_tester:
+            tester_edit.setText(_default_tester)
         tester_edit.textChanged.connect(self._save_summary)
         person_grid.addWidget(tester_edit, 1, 1)
         self._review_widgets['tester_edit'] = tester_edit
@@ -1164,6 +1176,8 @@ class MainWindow(QMainWindow):
         reviewer_edit.setPlaceholderText("审核人姓名")
         if self._session and self._session.summary and self._session.summary.actual_reviewer:
             reviewer_edit.setText(self._session.summary.actual_reviewer)
+        elif _default_reviewer:
+            reviewer_edit.setText(_default_reviewer)
         reviewer_edit.textChanged.connect(self._save_summary)
         person_grid.addWidget(reviewer_edit, 2, 1)
         self._review_widgets['reviewer_edit'] = reviewer_edit
@@ -1171,6 +1185,33 @@ class MainWindow(QMainWindow):
         layout.addLayout(person_grid)
 
         return group
+
+    def _get_default_person(self, role: str) -> str:
+        """从变更方案步骤中提取默认人员。"""
+        if not self._plan:
+            return ""
+        for group in self._plan.step_groups:
+            if role == 'tester' and group.group_type == 'test':
+                for step in group.steps:
+                    if step.implementer:
+                        return step.implementer
+            elif role == 'implementer' and group.group_type == 'implementation':
+                for step in group.steps:
+                    if step.implementer:
+                        return step.implementer
+            elif role == 'reviewer' and group.group_type == 'implementation':
+                for step in group.steps:
+                    if step.reviewer:
+                        return step.reviewer
+        for group in self._plan.step_groups:
+            for step in group.steps:
+                if role == 'implementer' and step.implementer:
+                    return step.implementer
+                if role == 'reviewer' and step.reviewer:
+                    return step.reviewer
+                if role == 'tester' and step.implementer:
+                    return step.implementer
+        return ""
 
     def _build_stats_text(self) -> str:
         """构建统计信息文本。
