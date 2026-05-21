@@ -221,6 +221,22 @@ class RecordingEngine:
                 return False
             self._ffmpeg_path = path
 
+            # Verify the binary actually works
+            try:
+                result = subprocess.run(
+                    [path, "-version"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode != 0:
+                    logger.warning(f"ffmpeg -version 失败: {result.stderr[:200]}")
+                    return False
+                # Log first line of version info
+                ver_line = result.stdout.splitlines()[0] if result.stdout.splitlines() else "unknown"
+                logger.info(f"ffmpeg: {ver_line}")
+            except Exception as e:
+                logger.warning(f"ffmpeg -version 异常: {e}")
+                return False
+
             if sys.platform == "darwin":
                 device = self._detect_macos_screen_device(path)
                 if device:
@@ -421,8 +437,8 @@ class RecordingEngine:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-            # On Windows, use DEVNULL for stdin (frag_keyframe handles graceful exit).
-            # On macOS/Linux, SIGINT handles graceful exit via signal.
+            logger.info(f"ffmpeg 命令: {' '.join(cmd)}")
+
             self._ffmpeg_process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -430,8 +446,8 @@ class RecordingEngine:
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
             )
-            # Give ffmpeg a moment to start up and detect any immediate errors
-            time.sleep(0.5)
+            # Give ffmpeg time to initialize and detect any immediate errors
+            time.sleep(1.5)
             retcode = self._ffmpeg_process.poll()
             if retcode is not None:
                 # ffmpeg exited immediately — read error output
@@ -486,18 +502,21 @@ class RecordingEngine:
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
         """构建 Windows gdigrab 录屏命令。"""
+        # -movflags +frag_keyframe: writes fragmented MP4, playable even if process
+        # is killed before writing the final moov atom.
         cmd = [
             ffmpeg_path,
             "-y",
-            "-loglevel", "warning",  # show warnings so we can diagnose issues
+            "-loglevel", "warning",
             "-nostdin",
             "-f", "gdigrab",
             "-framerate", str(self._fps),
             "-i", "desktop",
-            "-vcodec", "libx264",
+            "-c:v", "libx264",
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-crf", "28",
+            "-movflags", "+frag_keyframe",
             "-an",
         ]
 

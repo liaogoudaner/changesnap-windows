@@ -21,11 +21,14 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download static ffmpeg
+        shell: pwsh
         run: |
-          curl -L -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          7z x ffmpeg.zip -offmpeg_static
-          move ffmpeg_static\ffmpeg-*\bin\ffmpeg.exe ffmpeg.exe
-          echo "FFMPEG READY"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_static -Force
+          $dir = Get-ChildItem -Path ffmpeg_static -Directory | Select-Object -First 1
+          Copy-Item -Path "$($dir.FullName)\bin\ffmpeg.exe" -Destination .\ffmpeg.exe -Force
+          Write-Host "ffmpeg.exe size: $((Get-Item .\ffmpeg.exe).Length) bytes"
+          .\ffmpeg.exe -version
 
       - name: Build with PyInstaller
         run: |
