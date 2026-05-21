@@ -44,7 +44,7 @@ def main():
         ctypes.windll.user32.SetProcessDPIAware()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("ChangeSnap")
+    app.setApplicationName("变更报告助手")
     app.setOrganizationName("ChangeSnap")
 
     app.setStyleSheet("""

@@ -59,7 +59,8 @@ echo [5/5] PyInstaller 打包 (onefile, ~80MB)...
 if "%FFMPEG_PATH%"=="" (
     echo [警告] 未找到 imageio-ffmpeg 二进制，ffmpeg 将从 PATH 查找
     pyinstaller --onefile --windowed ^
-        --name ChangeSnap ^
+        --name "变更报告助手" ^
+        --icon "icon.ico" ^
         --add-data "config.yaml;." ^
         --hidden-import PySide6.QtWidgets ^
         --hidden-import PySide6.QtCore ^
@@ -94,7 +95,8 @@ if "%FFMPEG_PATH%"=="" (
         app.py
 ) else (
     pyinstaller --onefile --windowed ^
-        --name ChangeSnap ^
+        --name "变更报告助手" ^
+        --icon "icon.ico" ^
         --add-data "config.yaml;." ^
         --add-binary "%FFMPEG_PATH%;imageio_ffmpeg/binaries" ^
         --hidden-import PySide6.QtWidgets ^

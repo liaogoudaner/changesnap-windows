@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ChangeSnap — 变更实施记录与报告生成")
+        self.setWindowTitle("变更报告助手")
         self.setWindowIcon(create_app_icon())
         self.resize(1280, 800)
 

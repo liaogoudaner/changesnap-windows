@@ -33,7 +33,8 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller --onefile --windowed `
-            --name ChangeSnap `
+            --name "变更报告助手" `
+            --icon "icon.ico" `
             --add-data "config.yaml;." `
             --add-binary "ffmpeg.exe;." `
             --hidden-import PySide6.QtWidgets `

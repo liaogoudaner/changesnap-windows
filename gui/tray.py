@@ -123,7 +123,19 @@ class SystemTray(QObject):
 
 # Also create a simple AppIcon for the main window
 def create_app_icon() -> QIcon:
-    """Create a simple application icon."""
+    """Create the application icon, trying real file first."""
+    # Try to load the embedded icon
+    try:
+        import sys, os
+        if getattr(sys, 'frozen', False):
+            icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
+        else:
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icon.ico')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+    except Exception:
+        pass
+    # Fallback: painted icon
     pixmap = QPixmap(64, 64)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)

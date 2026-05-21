@@ -119,24 +119,34 @@ def get_recordings_dir(session_id: str) -> Path:
     return ensure_dir(get_work_dir() / 'recordings' / session_id)
 
 
+def get_reports_dir() -> Path:
+    """获取报告和录屏输出根目录。
+
+    位于程序所在磁盘下的 reports/ 目录：
+    - PyInstaller 打包后：exe 同目录下的 reports/
+    - 源码运行：当前工作目录下的 reports/
+    """
+    if getattr(sys, 'frozen', False):
+        base = Path(sys.executable).parent
+    else:
+        base = Path.cwd()
+    return ensure_dir(base / 'reports')
+
+
 def get_outputs_dir() -> Path:
-    """获取报告输出目录。"""
-    return ensure_dir(get_work_dir() / 'outputs')
+    """获取报告输出目录（兼容旧代码）。"""
+    return get_reports_dir()
 
 
 def get_plan_output_dir(plan_name: str) -> Path:
     """获取指定方案的工作输出目录。
 
-    与 macOS 版本保持一致：
-    - outputs/<planName>/            — 方案专属输出目录
-    - outputs/<planName>/recording_XXX.mp4     — 录屏分段文件
-    - outputs/<planName>/[总结报告]<planName>.docx  — 总结报告
-    - outputs/<planName>/[变更录像]<planName>.mp4   — 最终合版录像
+    路径格式：reports/<planName>/
 
     Args:
         plan_name: 方案名称（将被自动 sanitize）
     """
-    return ensure_dir(get_outputs_dir() / safe_filename(plan_name))
+    return ensure_dir(get_reports_dir() / safe_filename(plan_name))
 
 
 def get_logs_dir() -> Path:

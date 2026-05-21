@@ -387,14 +387,15 @@ class RecordingEngine:
     def _build_output_path(self, segment_id: int) -> str:
         """构建录屏分段输出路径。
 
-        路径格式（与 macOS 版本保持一致）:
-            outputs/<planName>/[变更录像]<planName>.mp4
+        路径格式：
+            reports/<planName>/[变更录像]<planName>.mp4
 
         Args:
             segment_id: 分段编号（1-based）
         """
+        from utils.file_utils import get_reports_dir
         output_dir = ensure_dir(
-            get_work_dir() / 'outputs' / safe_filename(self._plan_name)
+            get_reports_dir() / safe_filename(self._plan_name)
         )
         safe_name = safe_filename(self._plan_name)
         return str(output_dir / f"[变更录像]{safe_name}.mp4")
