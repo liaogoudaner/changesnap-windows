@@ -987,7 +987,8 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "检测到未完成的会话",
-            f"产品: {product_name}\n时间: {updated_at}\n\n是否恢复？",
+            f"产品: {product_name}\n时间: {updated_at}\n\n是否恢复？\n"
+            "选择「是」恢复会话，选择「否」放弃并删除，选择「取消」忽略本次提醒。",
             QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
         )
 
@@ -1031,7 +1032,14 @@ class MainWindow(QMainWindow):
             # "放弃" — 标记为已放弃
             self.session_manager.mark_abandoned(recent['session_id'])
             logger.info(f"已放弃会话: {recent['session_id']}")
-        # "忽略" (Cancel) — 不执行任何操作
+        else:
+            # Cancel: auto-complete reviewing sessions (user finished but didn't generate report)
+            for s in sessions:
+                if s.get('status') == 'reviewing':
+                    self.session_manager.load_session(s['session_id'])
+                    self.session_manager.mark_completed()
+                    logger.info(f"自动完成审核中会话: {s['session_id']}")
+
 
     # ---- 审核面板（Task 2） ----
 

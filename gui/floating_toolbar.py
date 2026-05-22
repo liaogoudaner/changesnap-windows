@@ -51,22 +51,24 @@ from PySide6.QtGui import QFont, QMouseEvent
 FONT_MONO = "Consolas, Courier New, monospace"
 FONT_CN = "Microsoft YaHei, PingFang SC, sans-serif"
 
-# ----- 调色板 -----
+# ----- 调色板（清新亮色系） -----
 
-COLOR_BG = "rgba(26, 26, 46, 0.92)"
+COLOR_BG = "rgba(255, 255, 255, 0.95)"
 COLOR_RECORDING = "#ff3b30"
 COLOR_PAUSED = "#ff9500"
 COLOR_PRIMARY = "#007aff"
-COLOR_SECONDARY_BG = "#16213e"
-COLOR_SECONDARY_BORDER = "#0f3460"
-COLOR_STOP_BG = "#7f1d1d"
-COLOR_STOP_BORDER = "#dc2626"
-COLOR_DIVIDER = "#2a2a4e"
-COLOR_TEXT_PRIMARY = "#ffffff"
-COLOR_TEXT_SECONDARY = "#cccccc"
-COLOR_TEXT_MUTED = "#888888"
-COLOR_TEXT_DESC = "#aaaaaa"
-COLOR_SCROLLBAR = "#444444"
+COLOR_PRIMARY_HOVER = "#0056cc"
+COLOR_SECONDARY_BG = "#f0f4f8"
+COLOR_SECONDARY_BORDER = "#d0d7de"
+COLOR_STOP_BG = "#ffebee"
+COLOR_STOP_BORDER = "#ef9a9a"
+COLOR_DIVIDER = "#e8ecf0"
+COLOR_TEXT_PRIMARY = "#1a1a2e"
+COLOR_TEXT_SECONDARY = "#555555"
+COLOR_TEXT_MUTED = "#999999"
+COLOR_TEXT_DESC = "#444444"
+COLOR_SCROLLBAR = "#cccccc"
+COLOR_SHADOW = "rgba(0, 0, 0, 0.08)"
 
 
 class MiniFloatingWindow(QWidget):
@@ -124,7 +126,7 @@ class MiniFloatingWindow(QWidget):
             #floatingContainer {{
                 background: {COLOR_BG};
                 border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                border: 1px solid #e0e0e0;
             }}
         """)
         self._container = container
@@ -284,11 +286,11 @@ class MiniFloatingWindow(QWidget):
                 padding: 6px;
             }}
             QPushButton:hover {{
-                background: #0f3460;
-                border-color: #e94560;
+                background: #e3e8ef;
+                border-color: #a0aab4;
             }}
             QPushButton:pressed {{
-                background: #e94560;
+                background: #d0d7de;
             }}
         """)
         self._btn_capture_only.clicked.connect(self._on_capture_only)
@@ -308,11 +310,11 @@ class MiniFloatingWindow(QWidget):
                 padding: 4px 6px;
             }}
             QPushButton:hover {{
-                background: #0f3460;
-                border-color: #e94560;
+                background: #e3e8ef;
+                border-color: #a0aab4;
             }}
             QPushButton:pressed {{
-                background: #e94560;
+                background: #d0d7de;
             }}
         """
 
@@ -345,7 +347,7 @@ class MiniFloatingWindow(QWidget):
         self._btn_stop.setStyleSheet(f"""
             QPushButton {{
                 background: {COLOR_STOP_BG};
-                color: white;
+                color: #c62828;
                 border: 1px solid {COLOR_STOP_BORDER};
                 border-radius: 8px;
                 font-size: 12px;
@@ -353,10 +355,11 @@ class MiniFloatingWindow(QWidget):
                 padding: 8px;
             }}
             QPushButton:hover {{
-                background: #991b1b;
+                background: #ffcdd2;
+                border-color: #e57373;
             }}
             QPushButton:pressed {{
-                background: #b91c1c;
+                background: #ef9a9a;
             }}
         """)
         self._btn_stop.clicked.connect(self._on_stop)

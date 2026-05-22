@@ -184,28 +184,28 @@ class RegionSelector(QWidget):
                 label,
             )
 
-        # -- Bottom instruction bar -------------------------------------------
-        instruction = "Drag to select recording area    Esc to cancel"
-
-        # Measure the text so we can draw a background behind it.
-        inst_font = QFont("Microsoft YaHei", 10)
+        # -- Center instruction text -------------------------------------------
+        instruction = "拖动鼠标选择录屏区域    Esc 取消"
+        inst_font = QFont("Microsoft YaHei", 16, QFont.Bold)
         painter.setFont(inst_font)
         inst_rect = painter.boundingRect(QRect(), Qt.AlignmentFlag.AlignCenter, instruction)
 
-        inst_x = self.rect().center().x() - inst_rect.width() // 2 - 16
-        inst_y = self.rect().bottom() - 60
+        cx = self.rect().center().x()
+        cy = self.rect().center().y()
+        inst_x = cx - inst_rect.width() // 2 - 24
+        inst_y = cy + self.rect().height() // 4  # below center
 
-        painter.fillRect(
-            inst_x,
-            inst_y,
-            inst_rect.width() + 32,
-            inst_rect.height() + 16,
-            QColor(0, 0, 0, 160),
-        )
-        painter.setPen(QColor(255, 255, 255, 220))
+        # Semi-transparent background pill
+        bg_x = inst_x - 12
+        bg_y = inst_y - 8
+        bg_w = inst_rect.width() + 48
+        bg_h = inst_rect.height() + 32
+        painter.fillRect(bg_x, bg_y, bg_w, bg_h, QColor(0, 0, 0, 160))
+
+        painter.setPen(QColor(255, 255, 255, 240))
         painter.drawText(
-            inst_x + 16,
-            inst_y + 26,
+            inst_x + 24,
+            inst_y + inst_rect.height() + 4,
             instruction,
         )
 
