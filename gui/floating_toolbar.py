@@ -322,13 +322,13 @@ class MiniFloatingWindow(QWidget):
         self._btn_prev.clicked.connect(self._on_prev)
         small_row.addWidget(self._btn_prev)
 
-        self._btn_next = QPushButton("下一步\n→")
+        self._btn_next = QPushButton("下一步\nCtrl+0")
         self._btn_next.setMinimumHeight(44)
         self._btn_next.setStyleSheet(_small_btn_style)
         self._btn_next.clicked.connect(self._on_next)
         small_row.addWidget(self._btn_next)
 
-        self._btn_toggle_pause = QPushButton("暂停\nCtrl+0")
+        self._btn_toggle_pause = QPushButton("暂停\nCtrl+1")
         self._btn_toggle_pause.setMinimumHeight(44)
         self._btn_toggle_pause.setStyleSheet(_small_btn_style)
         self._btn_toggle_pause.clicked.connect(self._on_toggle_pause)

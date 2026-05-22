@@ -849,6 +849,7 @@ class MainWindow(QMainWindow):
             'screenshot_and_advance': (self.config.get_hotkey('screenshot_and_advance'), self._make_screenshot_callback(True)),
             'screenshot_only': (self.config.get_hotkey('screenshot_only'), self._make_screenshot_callback(False)),
             'prev_step': (self.config.get_hotkey('prev_step'), self._make_prev_step_callback()),
+            'next_step': (self.config.get_hotkey('next_step'), self._make_next_step_callback()),
             'toggle_recording': (self.config.get_hotkey('toggle_recording'), self._make_toggle_recording_callback()),
             'stop_session': (self.config.get_hotkey('stop_session'), self._make_stop_callback()),
         }
@@ -860,7 +861,7 @@ class MainWindow(QMainWindow):
             hm.start(hotkey_map, hwnd=win_hwnd)
             # Immediate status update based on registered hotkeys
             if hasattr(hm, 'has_win32_hotkeys') and hm.has_win32_hotkeys:
-                self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:暂停 | Ctrl+Shift+S:停止 (Win32)")
+                self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:下一步 | Ctrl+1:暂停 | Ctrl+Shift+S:停止 (Win32)")
             QTimer.singleShot(2000, self._check_hotkey_health)
         except Exception as e:
             logger.warning(f"热键启动失败: {e}")
@@ -869,7 +870,7 @@ class MainWindow(QMainWindow):
     def _check_hotkey_health(self):
         hm = self.hotkey_manager
         if hm and hm.is_listening:
-            self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:暂停 | Ctrl+Shift+S:停止")
+            self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:下一步 | Ctrl+1:暂停 | Ctrl+Shift+S:停止")
         elif hm and hm.has_win32_hotkeys:
             self._status_hotkeys.setText("Win32热键: Ctrl+8/9/7/0 | Ctrl+Shift+S")
         else:
@@ -879,6 +880,12 @@ class MainWindow(QMainWindow):
         def cb():
             if self._session:
                 self.session_manager.prev_step()
+        return cb
+
+    def _make_next_step_callback(self):
+        def cb():
+            if self._session:
+                self.session_manager.advance_step()
         return cb
 
     def _make_toggle_recording_callback(self):
@@ -1477,8 +1484,10 @@ class MainWindow(QMainWindow):
                 elif hotkey_id == 3:
                     self._toolbar_prev()
                 elif hotkey_id == 4:
-                    self._toolbar_toggle_pause()
+                    self._toolbar_next()
                 elif hotkey_id == 5:
+                    self._toolbar_toggle_pause()
+                elif hotkey_id == 6:
                     self._toolbar_stop()
                 return True, None
 

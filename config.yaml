@@ -4,7 +4,8 @@ hotkeys:
   screenshot_and_advance: "Ctrl+8"
   screenshot_only: "Ctrl+9"
   prev_step: "Ctrl+7"
-  toggle_recording: "Ctrl+0"
+  next_step: "Ctrl+0"
+  toggle_recording: "Ctrl+1"
   stop_session: "Ctrl+Shift+S"
 
 # 截图设置
