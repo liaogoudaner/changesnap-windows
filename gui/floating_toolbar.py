@@ -251,7 +251,7 @@ class MiniFloatingWindow(QWidget):
     def _build_buttons(self, parent_layout):
         """三个按钮区域：主按钮、次级按钮、并排双按钮。"""
         # ── 截图并前进（主按钮，全宽，蓝色） ──
-        self._btn_capture_advance = QPushButton("截图并前进")
+        self._btn_capture_advance = QPushButton("截图并前进\nCtrl+8")
         self._btn_capture_advance.setMinimumHeight(44)
         self._btn_capture_advance.setStyleSheet(f"""
             QPushButton {{
@@ -274,7 +274,7 @@ class MiniFloatingWindow(QWidget):
         parent_layout.addWidget(self._btn_capture_advance)
 
         # ── 仅截图（次级按钮，全宽） ──
-        self._btn_capture_only = QPushButton("仅截图")
+        self._btn_capture_only = QPushButton("仅截图\nCtrl+9")
         self._btn_capture_only.setMinimumHeight(38)
         self._btn_capture_only.setStyleSheet(f"""
             QPushButton {{

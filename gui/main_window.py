@@ -730,11 +730,13 @@ class MainWindow(QMainWindow):
         re = self.recording_engine
         if re.is_recording and not re.is_paused:
             re.pause()
+            self.session_manager.pause_recording()
             self._status_recording.setText("⏸ 已暂停")
             if self._floating_toolbar:
                 self._floating_toolbar.update_recording_state(True, True)
         elif re.is_paused:
             re.resume()
+            self.session_manager.resume_recording()
             self._status_recording.setText("\U0001f534 录制中")
             if self._floating_toolbar:
                 self._floating_toolbar.update_recording_state(True, False)
