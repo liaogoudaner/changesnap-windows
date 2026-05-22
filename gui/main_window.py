@@ -591,6 +591,7 @@ class MainWindow(QMainWindow):
 
         result = self.report_generator.generate(self._session, Path(file_path))
         if result['success']:
+            self.session_manager.mark_completed()  # 标记完成，不再弹恢复提示
             QMessageBox.information(
                 self, "生成成功",
                 f"总结报告已生成:\n{result['filepath']}\n大小: {result['file_size'] / 1024:.0f}KB"
