@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         # 审核模式
         self._review_mode = False
         self._review_widgets = {}
+        self._is_paused_ui = False
 
         # 定时器
         self._status_timer = QTimer(self)
@@ -726,20 +727,20 @@ class MainWindow(QMainWindow):
         self._stop_session()
 
     def _toolbar_toggle_pause(self):
-        """暂停/恢复录屏。"""
+        """暂停/恢复 — 仅改变 UI 状态，不停止录屏。录屏一路到底，生成单个视频文件。"""
         re = self.recording_engine
-        if re.is_recording and not re.is_paused:
-            re.pause()
-            self.session_manager.pause_recording()
-            self._status_recording.setText("⏸ 已暂停")
-            if self._floating_toolbar:
-                self._floating_toolbar.update_recording_state(True, True)
-        elif re.is_paused:
-            re.resume()
-            self.session_manager.resume_recording()
+        if not re.is_recording:
+            return
+        if self._is_paused_ui:
+            self._is_paused_ui = False
             self._status_recording.setText("\U0001f534 录制中")
             if self._floating_toolbar:
                 self._floating_toolbar.update_recording_state(True, False)
+        else:
+            self._is_paused_ui = True
+            self._status_recording.setText("⏸ 已暂停")
+            if self._floating_toolbar:
+                self._floating_toolbar.update_recording_state(True, True)
 
     def _on_screenshot_captured(self, step_id: str, meta: ScreenshotMeta):
         """截图完成后的 UI 更新。"""

@@ -514,9 +514,8 @@ class RecordingEngine:
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
         """构建 Windows gdigrab 录屏命令。"""
-        # Build video filter chain
-        filters = ["scale=1280:-2:flags=lanczos"]  # always scale down
-
+        # Build video filter chain (crop only, no scaling — CRF handles compression)
+        vf_parts = []
         region = self._region
         if region:
             rw = region.get('width', 0)
@@ -524,13 +523,11 @@ class RecordingEngine:
             rx = region.get('left', 0)
             ry = region.get('top', 0)
             if rw > 0 and rh > 0:
-                rw = rw & ~1  # force even for libx264
+                rw = rw & ~1
                 rh = rh & ~1
                 if rw >= 2 and rh >= 2:
-                    filters.insert(0, f"crop={rw}:{rh}:{rx}:{ry}")
+                    vf_parts.append(f"crop={rw}:{rh}:{rx}:{ry}")
                     logger.info(f"crop: {rw}x{rh}+{rx}+{ry}")
-
-        vf = ','.join(filters)  # crop first, then scale
 
         cmd = [
             ffmpeg_path,
@@ -542,12 +539,15 @@ class RecordingEngine:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-crf", "40",
-            "-vf", vf,
+        ]
+        if vf_parts:
+            cmd.extend(["-vf", ','.join(vf_parts)])
+        cmd.extend([
             "-g", "5",
             "-movflags", "+frag_keyframe",
             "-an",
             output_path,
-        ]
+        ])
         logger.info(f"ffmpeg cmd: {' '.join(cmd)}")
         return cmd
 
