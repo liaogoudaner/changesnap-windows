@@ -387,7 +387,8 @@ class RecordingEngine:
         """构建录屏分段输出路径。
 
         路径格式：
-            reports/<planName>/[变更录像]<planName>.mp4
+            reports/<planName>/[变更录像]<planName>.mp4    （第一段）
+            reports/<planName>/[变更录像]<planName>_2.mp4  （后续分段）
 
         Args:
             segment_id: 分段编号（1-based）
@@ -397,7 +398,9 @@ class RecordingEngine:
             get_reports_dir() / safe_filename(self._plan_name)
         )
         safe_name = safe_filename(self._plan_name)
-        return str(output_dir / f"[变更录像]{safe_name}.mp4")
+        if segment_id == 1:
+            return str(output_dir / f"[变更录像]{safe_name}.mp4")
+        return str(output_dir / f"[变更录像]{safe_name}_{segment_id}.mp4")
 
     # ---- ffmpeg 进程管理 ----
 
