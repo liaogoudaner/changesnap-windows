@@ -514,9 +514,23 @@ class RecordingEngine:
 
     def _build_windows_cmd(self, ffmpeg_path: str, output_path: str) -> list[str]:
         """构建 Windows gdigrab 录屏命令。"""
-        cmd = [
-            ffmpeg_path,
-            "-y",
+        cmd = [ffmpeg_path, "-y"]
+
+        # Apply region selection as gdigrab native options (before -i desktop)
+        region = self._region
+        if region:
+            rw = region.get('width', 0)
+            rh = region.get('height', 0)
+            rx = region.get('left', 0)
+            ry = region.get('top', 0)
+            if rw > 0 and rh > 0:
+                rw = rw & ~1  # force even for libx264
+                rh = rh & ~1
+                if rw >= 2 and rh >= 2:
+                    cmd.extend(["-offset_x", str(rx), "-offset_y", str(ry),
+                                "-video_size", f"{rw}x{rh}"])
+
+        cmd.extend([
             "-f", "gdigrab",
             "-framerate", str(self._fps),
             "-i", "desktop",
@@ -528,7 +542,7 @@ class RecordingEngine:
             "-movflags", "+frag_keyframe",
             "-an",
             output_path,
-        ]
+        ])
         logger.info(f"ffmpeg cmd: {' '.join(cmd)}")
         return cmd
 
