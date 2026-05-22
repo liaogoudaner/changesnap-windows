@@ -475,6 +475,7 @@ class MainWindow(QMainWindow):
                 on_capture_and_advance=self._toolbar_capture,
                 on_capture_only=self._toolbar_capture_only,
                 on_prev=self._toolbar_prev,
+                on_next=self._toolbar_next,
                 on_toggle_pause=self._toolbar_toggle_pause,
                 on_stop=self._toolbar_stop,
             )
@@ -490,6 +491,7 @@ class MainWindow(QMainWindow):
             self._btn_start.setEnabled(False)
             self._btn_stop.setEnabled(True)
             self._btn_load.setEnabled(False)
+            self._chk_save_recording.setEnabled(False)  # 开始后不可更改
             if recording_ok:
                 self._status_recording.setText("\U0001f534 录制中")
             else:
@@ -677,19 +679,8 @@ class MainWindow(QMainWindow):
         """浮动栏：截图并前进。"""
         cb = self._make_screenshot_callback(True)
         cb()
-        if self._session:
-            idx = self._session.current_step_index + 1
-            total = self._session.total_steps
-            self._status_step.setText(f"步骤: {idx}/{total}")
-            if self._floating_toolbar:
-                current_step = self._session.get_current_step()
-                all_steps = self._session.get_all_steps()
-                total_ss = sum(len(s.screenshots) for s in all_steps)
-                self._floating_toolbar.update_count(idx, total, total_ss)
-                self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
-                if current_step:
-                    self._floating_toolbar.update_description(current_step.description)
-            self._refresh_screenshots()
+        self._refresh_toolbar_state()
+        self._refresh_screenshots()
 
     def _toolbar_capture_only(self):
         """浮动栏：仅截图。"""
@@ -707,17 +698,28 @@ class MainWindow(QMainWindow):
         """浮动栏：上一步。"""
         if self._session:
             self.session_manager.prev_step()
-            idx = self._session.current_step_index + 1
-            total = self._session.total_steps
-            self._status_step.setText(f"步骤: {idx}/{total}")
-            if self._floating_toolbar:
-                current_step = self._session.get_current_step()
-                all_steps = self._session.get_all_steps()
-                total_ss = sum(len(s.screenshots) for s in all_steps)
-                self._floating_toolbar.update_count(idx, total, total_ss)
-                self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
-                if current_step:
-                    self._floating_toolbar.update_description(current_step.description)
+            self._refresh_toolbar_state()
+
+    def _toolbar_next(self):
+        """浮动栏：下一步（跳过，不截图）。"""
+        if self._session:
+            self.session_manager.advance_step()
+            self._refresh_toolbar_state()
+
+    def _refresh_toolbar_state(self):
+        """刷新浮动窗的步骤、截图数等信息。"""
+        if not self._session or not self._floating_toolbar:
+            return
+        idx = self._session.current_step_index + 1
+        total = self._session.total_steps
+        current_step = self._session.get_current_step()
+        all_steps = self._session.get_all_steps()
+        total_ss = sum(len(s.screenshots) for s in all_steps)
+        self._status_step.setText(f"步骤: {idx}/{total}")
+        self._floating_toolbar.update_count(idx, total, total_ss)
+        self._floating_toolbar.update_step(f"步骤 {idx}/{total}")
+        if current_step:
+            self._floating_toolbar.update_description(current_step.description)
 
     def _toolbar_stop(self):
         """浮动栏：停止。"""

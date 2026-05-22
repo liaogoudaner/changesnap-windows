@@ -77,6 +77,7 @@ class MiniFloatingWindow(QWidget):
         on_capture_and_advance=None,
         on_capture_only=None,
         on_prev=None,
+        on_next=None,
         on_toggle_pause=None,
         on_stop=None,
     ):
@@ -101,6 +102,7 @@ class MiniFloatingWindow(QWidget):
         self.on_capture_and_advance = on_capture_and_advance
         self.on_capture_only = on_capture_only
         self.on_prev = on_prev
+        self.on_next = on_next
         self.on_toggle_pause = on_toggle_pause
         self.on_stop = on_stop
 
@@ -292,20 +294,18 @@ class MiniFloatingWindow(QWidget):
         self._btn_capture_only.clicked.connect(self._on_capture_only)
         parent_layout.addWidget(self._btn_capture_only)
 
-        # ── 上一步 + 暂停/恢复（并排） ──
+        # ── 上一步 + 下一步 + 暂停/恢复（并排三按钮） ──
         small_row = QHBoxLayout()
         small_row.setSpacing(6)
 
-        self._btn_prev = QPushButton("上一步\nCtrl+7")
-        self._btn_prev.setMinimumHeight(44)
-        self._btn_prev.setStyleSheet(f"""
+        _small_btn_style = f"""
             QPushButton {{
                 background: {COLOR_SECONDARY_BG};
                 color: {COLOR_TEXT_SECONDARY};
                 border: 1px solid {COLOR_SECONDARY_BORDER};
                 border-radius: 8px;
                 font-size: 11px;
-                padding: 6px;
+                padding: 4px 6px;
             }}
             QPushButton:hover {{
                 background: #0f3460;
@@ -314,29 +314,23 @@ class MiniFloatingWindow(QWidget):
             QPushButton:pressed {{
                 background: #e94560;
             }}
-        """)
+        """
+
+        self._btn_prev = QPushButton("上一步\nCtrl+7")
+        self._btn_prev.setMinimumHeight(44)
+        self._btn_prev.setStyleSheet(_small_btn_style)
         self._btn_prev.clicked.connect(self._on_prev)
         small_row.addWidget(self._btn_prev)
 
+        self._btn_next = QPushButton("下一步\n→")
+        self._btn_next.setMinimumHeight(44)
+        self._btn_next.setStyleSheet(_small_btn_style)
+        self._btn_next.clicked.connect(self._on_next)
+        small_row.addWidget(self._btn_next)
+
         self._btn_toggle_pause = QPushButton("暂停\nCtrl+0")
         self._btn_toggle_pause.setMinimumHeight(44)
-        self._btn_toggle_pause.setStyleSheet(f"""
-            QPushButton {{
-                background: {COLOR_SECONDARY_BG};
-                color: {COLOR_TEXT_SECONDARY};
-                border: 1px solid {COLOR_SECONDARY_BORDER};
-                border-radius: 8px;
-                font-size: 11px;
-                padding: 6px;
-            }}
-            QPushButton:hover {{
-                background: #0f3460;
-                border-color: #e94560;
-            }}
-            QPushButton:pressed {{
-                background: #e94560;
-            }}
-        """)
+        self._btn_toggle_pause.setStyleSheet(_small_btn_style)
         self._btn_toggle_pause.clicked.connect(self._on_toggle_pause)
         small_row.addWidget(self._btn_toggle_pause)
 
@@ -464,6 +458,10 @@ class MiniFloatingWindow(QWidget):
     def _on_prev(self):
         if self.on_prev:
             self.on_prev()
+
+    def _on_next(self):
+        if self.on_next:
+            self.on_next()
 
     def _on_toggle_pause(self):
         if self.on_toggle_pause:

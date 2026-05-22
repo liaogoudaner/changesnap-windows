@@ -520,7 +520,7 @@ class RecordingEngine:
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-pix_fmt", "yuv420p",
-            "-crf", "35",
+            "-crf", "40",
             "-g", "5",
             "-movflags", "+frag_keyframe",
             "-an",

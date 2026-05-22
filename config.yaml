@@ -15,7 +15,7 @@ screenshot:
 
 # 录屏设置
 recording:
-  fps: 5
+  fps: 3
   segment_minutes: 30
   auto_compress: true
 
