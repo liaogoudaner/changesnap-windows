@@ -105,13 +105,16 @@ class RegionSelector(QWidget):
 
             # Ignore selections smaller than 20x20 px (treat as cancel).
             if rect.width() > 20 and rect.height() > 20:
-                # Coordinates are already in virtual-geometry space, which
-                # IS the global screen coordinate space on Windows.
+                # Convert from Qt logical pixels to physical pixels.
+                # Qt virtualGeometry uses device-independent coordinates;
+                # mss/gdigrab expect physical screen coordinates.
+                # On 125%/150% scaled displays the DPR fixes the mismatch.
+                dpr = QApplication.primaryScreen().devicePixelRatio()
                 self._result = {
-                    "left": rect.x(),
-                    "top": rect.y(),
-                    "width": rect.width(),
-                    "height": rect.height(),
+                    "left": int(rect.x() * dpr),
+                    "top": int(rect.y() * dpr),
+                    "width": int(rect.width() * dpr),
+                    "height": int(rect.height() * dpr),
                 }
             else:
                 self._result = None
