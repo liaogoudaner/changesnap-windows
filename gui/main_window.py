@@ -728,31 +728,16 @@ class MainWindow(QMainWindow):
     def _toolbar_toggle_pause(self):
         """暂停/恢复录屏。"""
         re = self.recording_engine
-        if re.is_paused:
-            re.resume()
-            self.session_manager.resume_recording()
-            self._status_recording.setText("\U0001f534 录制中")
-            if self._session:
-                self._tray.update_state(
-                    'running',
-                    step_idx=self._session.current_step_index + 1,
-                    total=self._session.total_steps,
-                    elapsed=re.elapsed_seconds,
-                )
-            if self._floating_toolbar:
-                self._floating_toolbar.update_recording_state(True, False)
-        elif re.is_recording:
+        if re.is_recording and not re.is_paused:
             re.pause()
-            self.session_manager.pause_recording()
             self._status_recording.setText("⏸ 已暂停")
-            if self._session:
-                self._tray.update_state(
-                    'paused',
-                    step_idx=self._session.current_step_index + 1,
-                    total=self._session.total_steps,
-                )
             if self._floating_toolbar:
                 self._floating_toolbar.update_recording_state(True, True)
+        elif re.is_paused:
+            re.resume()
+            self._status_recording.setText("\U0001f534 录制中")
+            if self._floating_toolbar:
+                self._floating_toolbar.update_recording_state(True, False)
 
     def _on_screenshot_captured(self, step_id: str, meta: ScreenshotMeta):
         """截图完成后的 UI 更新。"""
@@ -848,9 +833,6 @@ class MainWindow(QMainWindow):
         hotkey_map = {
             'screenshot_and_advance': (self.config.get_hotkey('screenshot_and_advance'), self._make_screenshot_callback(True)),
             'screenshot_only': (self.config.get_hotkey('screenshot_only'), self._make_screenshot_callback(False)),
-            'prev_step': (self.config.get_hotkey('prev_step'), self._make_prev_step_callback()),
-            'next_step': (self.config.get_hotkey('next_step'), self._make_next_step_callback()),
-            'toggle_recording': (self.config.get_hotkey('toggle_recording'), self._make_toggle_recording_callback()),
             'stop_session': (self.config.get_hotkey('stop_session'), self._make_stop_callback()),
         }
 
@@ -861,7 +843,7 @@ class MainWindow(QMainWindow):
             hm.start(hotkey_map, hwnd=win_hwnd)
             # Immediate status update based on registered hotkeys
             if hasattr(hm, 'has_win32_hotkeys') and hm.has_win32_hotkeys:
-                self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:下一步 | Ctrl+1:暂停 | Ctrl+Shift+S:停止 (Win32)")
+                self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+Shift+S:停止 (Win32)")
             QTimer.singleShot(2000, self._check_hotkey_health)
         except Exception as e:
             logger.warning(f"热键启动失败: {e}")
@@ -870,7 +852,7 @@ class MainWindow(QMainWindow):
     def _check_hotkey_health(self):
         hm = self.hotkey_manager
         if hm and hm.is_listening:
-            self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+7:上一步 | Ctrl+0:下一步 | Ctrl+1:暂停 | Ctrl+Shift+S:停止")
+            self._status_hotkeys.setText("Ctrl+8:截图 | Ctrl+9:仅截图 | Ctrl+Shift+S:停止")
         elif hm and hm.has_win32_hotkeys:
             self._status_hotkeys.setText("Win32热键: Ctrl+8/9/7/0 | Ctrl+Shift+S")
         else:
@@ -1490,12 +1472,6 @@ class MainWindow(QMainWindow):
                 elif hotkey_id == 2:
                     self._toolbar_capture_only()
                 elif hotkey_id == 3:
-                    self._toolbar_prev()
-                elif hotkey_id == 4:
-                    self._toolbar_next()
-                elif hotkey_id == 5:
-                    self._toolbar_toggle_pause()
-                elif hotkey_id == 6:
                     self._toolbar_stop()
                 return True, None
 

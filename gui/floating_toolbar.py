@@ -251,7 +251,7 @@ class MiniFloatingWindow(QWidget):
     def _build_buttons(self, parent_layout):
         """三个按钮区域：主按钮、次级按钮、并排双按钮。"""
         # ── 截图并前进（主按钮，全宽，蓝色） ──
-        self._btn_capture_advance = QPushButton("截图并前进\nCtrl+8")
+        self._btn_capture_advance = QPushButton("截图并前进")
         self._btn_capture_advance.setMinimumHeight(44)
         self._btn_capture_advance.setStyleSheet(f"""
             QPushButton {{
@@ -274,7 +274,7 @@ class MiniFloatingWindow(QWidget):
         parent_layout.addWidget(self._btn_capture_advance)
 
         # ── 仅截图（次级按钮，全宽） ──
-        self._btn_capture_only = QPushButton("仅截图     Ctrl+9")
+        self._btn_capture_only = QPushButton("仅截图")
         self._btn_capture_only.setMinimumHeight(38)
         self._btn_capture_only.setStyleSheet(f"""
             QPushButton {{
@@ -318,19 +318,19 @@ class MiniFloatingWindow(QWidget):
             }}
         """
 
-        self._btn_prev = QPushButton("上一步\nCtrl+7")
+        self._btn_prev = QPushButton("上一步")
         self._btn_prev.setMinimumHeight(44)
         self._btn_prev.setStyleSheet(_small_btn_style)
         self._btn_prev.clicked.connect(self._on_prev)
         small_row.addWidget(self._btn_prev)
 
-        self._btn_next = QPushButton("下一步\nCtrl+0")
+        self._btn_next = QPushButton("下一步")
         self._btn_next.setMinimumHeight(44)
         self._btn_next.setStyleSheet(_small_btn_style)
         self._btn_next.clicked.connect(self._on_next)
         small_row.addWidget(self._btn_next)
 
-        self._btn_toggle_pause = QPushButton("暂停\nCtrl+1")
+        self._btn_toggle_pause = QPushButton("暂停")
         self._btn_toggle_pause.setMinimumHeight(44)
         self._btn_toggle_pause.setStyleSheet(_small_btn_style)
         self._btn_toggle_pause.clicked.connect(self._on_toggle_pause)
@@ -342,7 +342,7 @@ class MiniFloatingWindow(QWidget):
 
     def _build_stop_button(self, parent_layout):
         """停止变更：红色全宽按钮。"""
-        self._btn_stop = QPushButton("⏹ 停止变更  Ctrl+Shift+S")
+        self._btn_stop = QPushButton("停止变更")
         self._btn_stop.setMinimumHeight(40)
         self._btn_stop.setStyleSheet(f"""
             QPushButton {{
@@ -432,19 +432,19 @@ class MiniFloatingWindow(QWidget):
                 f"color: {COLOR_PAUSED}; font-size: 16px;"
             )
             self._status_text.setText("已暂停")
-            self._btn_toggle_pause.setText("恢复\nCtrl+0")
+            self._btn_toggle_pause.setText("恢复")
         elif is_recording:
             self._indicator.setStyleSheet(
                 f"color: {COLOR_RECORDING}; font-size: 16px;"
             )
             self._status_text.setText("录制中")
-            self._btn_toggle_pause.setText("暂停\nCtrl+0")
+            self._btn_toggle_pause.setText("暂停")
         else:
             self._indicator.setStyleSheet(
                 f"color: #666666; font-size: 16px;"
             )
             self._status_text.setText("未录制")
-            self._btn_toggle_pause.setText("暂停\nCtrl+0")
+            self._btn_toggle_pause.setText("暂停")
 
     # ==================================================================
     #  内部回调转发
