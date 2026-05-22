@@ -95,7 +95,6 @@ class MainWindow(QMainWindow):
         self._tray.capture_and_advance.connect(self._toolbar_capture)
         self._tray.capture_only.connect(self._toolbar_capture_only)
         self._tray.previous_step.connect(self._toolbar_prev)
-        self._tray.toggle_pause.connect(self._toolbar_toggle_pause)
         self._tray.stop_session.connect(self._toolbar_stop)
         self._tray.show_main_window.connect(self.show)
 
@@ -118,7 +117,6 @@ class MainWindow(QMainWindow):
         # 审核模式
         self._review_mode = False
         self._review_widgets = {}
-        self._is_paused_ui = False
 
         # 定时器
         self._status_timer = QTimer(self)
@@ -477,7 +475,6 @@ class MainWindow(QMainWindow):
                 on_capture_only=self._toolbar_capture_only,
                 on_prev=self._toolbar_prev,
                 on_next=self._toolbar_next,
-                on_toggle_pause=self._toolbar_toggle_pause,
                 on_stop=self._toolbar_stop,
             )
             self._floating_toolbar.update_step(f"步骤 1/{total}")
@@ -486,7 +483,7 @@ class MainWindow(QMainWindow):
             )
             self._floating_toolbar.update_count(1, total, total_ss)
             self._floating_toolbar.update_timer(0.0)
-            self._floating_toolbar.update_recording_state(recording_ok, False)
+            self._floating_toolbar.update_recording_state(recording_ok)
             self._floating_toolbar.show()
 
             self._btn_start.setEnabled(False)
@@ -725,22 +722,6 @@ class MainWindow(QMainWindow):
     def _toolbar_stop(self):
         """浮动栏：停止。"""
         self._stop_session()
-
-    def _toolbar_toggle_pause(self):
-        """暂停/恢复 — 仅改变 UI 状态，不停止录屏。录屏一路到底，生成单个视频文件。"""
-        re = self.recording_engine
-        if not re.is_recording:
-            return
-        if self._is_paused_ui:
-            self._is_paused_ui = False
-            self._status_recording.setText("\U0001f534 录制中")
-            if self._floating_toolbar:
-                self._floating_toolbar.update_recording_state(True, False)
-        else:
-            self._is_paused_ui = True
-            self._status_recording.setText("⏸ 已暂停")
-            if self._floating_toolbar:
-                self._floating_toolbar.update_recording_state(True, True)
 
     def _on_screenshot_captured(self, step_id: str, meta: ScreenshotMeta):
         """截图完成后的 UI 更新。"""

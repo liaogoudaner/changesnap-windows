@@ -12,7 +12,6 @@ class SystemTray(QObject):
     capture_and_advance = Signal()
     capture_only = Signal()
     previous_step = Signal()
-    toggle_pause = Signal()
     stop_session = Signal()
     show_main_window = Signal()
 
@@ -80,7 +79,6 @@ class SystemTray(QObject):
             self._menu.addAction("截图并前进 (Ctrl+8)", self.capture_and_advance.emit)
             self._menu.addAction("仅截图 (Ctrl+9)", self.capture_only.emit)
             self._menu.addAction("上一步 (Ctrl+7)", self.previous_step.emit)
-            self._menu.addAction("暂停/恢复 (Ctrl+0)", self.toggle_pause.emit)
             self._menu.addSeparator()
             self._menu.addAction("停止变更 (Ctrl+Shift+S)", self.stop_session.emit)
             self._menu.addSeparator()
@@ -99,9 +97,6 @@ class SystemTray(QObject):
             self._elapsed = elapsed
             if not self._timer.isActive():
                 self._timer.start(1000)
-        elif phase == 'paused':
-            self._tray.setIcon(self._make_icon('paused'))
-            step_info = f"已暂停 | 步骤 {step_idx}/{total}"
         elif phase == 'reviewing':
             self._tray.setIcon(self._make_icon('reviewing'))
             step_info = ""

@@ -80,7 +80,6 @@ class MiniFloatingWindow(QWidget):
         on_capture_only=None,
         on_prev=None,
         on_next=None,
-        on_toggle_pause=None,
         on_stop=None,
     ):
         super().__init__(None)
@@ -98,14 +97,12 @@ class MiniFloatingWindow(QWidget):
 
         # 内部状态
         self._is_recording = True
-        self._is_paused = False
 
         # 回调
         self.on_capture_and_advance = on_capture_and_advance
         self.on_capture_only = on_capture_only
         self.on_prev = on_prev
         self.on_next = on_next
-        self.on_toggle_pause = on_toggle_pause
         self.on_stop = on_stop
 
         self._build_ui()
@@ -296,7 +293,7 @@ class MiniFloatingWindow(QWidget):
         self._btn_capture_only.clicked.connect(self._on_capture_only)
         parent_layout.addWidget(self._btn_capture_only)
 
-        # ── 上一步 + 下一步 + 暂停/恢复（并排三按钮） ──
+        # ── 上一步 + 下一步（并排） ──
         small_row = QHBoxLayout()
         small_row.setSpacing(6)
 
@@ -329,12 +326,6 @@ class MiniFloatingWindow(QWidget):
         self._btn_next.setStyleSheet(_small_btn_style)
         self._btn_next.clicked.connect(self._on_next)
         small_row.addWidget(self._btn_next)
-
-        self._btn_toggle_pause = QPushButton("暂停")
-        self._btn_toggle_pause.setMinimumHeight(44)
-        self._btn_toggle_pause.setStyleSheet(_small_btn_style)
-        self._btn_toggle_pause.clicked.connect(self._on_toggle_pause)
-        small_row.addWidget(self._btn_toggle_pause)
 
         parent_layout.addLayout(small_row)
 
@@ -417,34 +408,15 @@ class MiniFloatingWindow(QWidget):
         s = int(elapsed_seconds % 60)
         self._timer_label.setText(f"{h:02d}:{m:02d}:{s:02d}")
 
-    def update_recording_state(self, is_recording: bool, is_paused: bool):
-        """更新录制状态指示器。
-
-        参数:
-            is_recording: 是否录制中
-            is_paused: 是否暂停（仅在 is_recording=True 时有意义）
-        """
+    def update_recording_state(self, is_recording: bool):
+        """更新录制状态指示器。"""
         self._is_recording = is_recording
-        self._is_paused = is_paused
-
-        if is_paused:
-            self._indicator.setStyleSheet(
-                f"color: {COLOR_PAUSED}; font-size: 16px;"
-            )
-            self._status_text.setText("已暂停")
-            self._btn_toggle_pause.setText("恢复")
-        elif is_recording:
-            self._indicator.setStyleSheet(
-                f"color: {COLOR_RECORDING}; font-size: 16px;"
-            )
+        if is_recording:
+            self._indicator.setStyleSheet(f"color: {COLOR_RECORDING}; font-size: 16px;")
             self._status_text.setText("录制中")
-            self._btn_toggle_pause.setText("暂停")
         else:
-            self._indicator.setStyleSheet(
-                f"color: #666666; font-size: 16px;"
-            )
+            self._indicator.setStyleSheet("color: #666666; font-size: 16px;")
             self._status_text.setText("未录制")
-            self._btn_toggle_pause.setText("暂停")
 
     # ==================================================================
     #  内部回调转发
@@ -465,10 +437,6 @@ class MiniFloatingWindow(QWidget):
     def _on_next(self):
         if self.on_next:
             self.on_next()
-
-    def _on_toggle_pause(self):
-        if self.on_toggle_pause:
-            self.on_toggle_pause()
 
     def _on_stop(self):
         if self.on_stop:
